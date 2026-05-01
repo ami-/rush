@@ -224,11 +224,12 @@ mod tests {
     #[test]
     fn combined2_dquoe() {
         let result = parse_cmd(r#""'inside'""#);
-        assert_eq!(result[0], r#""'inside'""#);
+        assert_eq!(result[0], r#"'inside'"#);
     }
     #[test]
     fn escape() {
         let result = parse_cmd(r#"\'\"literal quotes\"\'"#);
-        assert_eq!(result[0], r#"\'\"literal quotes\"\'"#);
+        assert_eq!(result[0], r#"'"literal"#);
+        assert_eq!(result[1], r#"quotes"'"#);
     }
 }
