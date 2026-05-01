@@ -5,7 +5,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path;
 use std::process::Command;
 
-const BUILTINS: [&str; 3] = ["echo", "exit", "type"];
+const BUILTINS: &[&str] = &["echo", "exit", "type", "pwd"];
 
 fn main() {
     loop {
@@ -18,12 +18,11 @@ fn main() {
         let (cmd, args) = parse_command(line.trim());
 
         match cmd {
-            "type" => do_type(args),
-            "echo" => println!("{}", args),
             "exit" => break,
+            "echo" => println!("{}", args),
+            "type" => do_type(args),
+            "pwd" => do_pwd(),
             _ if let Some(exe_path) = find_executable(cmd) => {
-                //let exe_path = dbg!(exe_path);
-                //println!("{}", exe_path.display());
                 let arg_i = args.split_whitespace();
                 let exe = exe_path.file_name().expect("bad file name");
                 let _ = Command::new(exe).args(arg_i).status();
@@ -65,4 +64,10 @@ fn find_executable(name: &str) -> Option<path::PathBuf> {
         }
     }
     None
+}
+
+fn do_pwd() {
+    if let Ok(dir) = env::current_dir() {
+        println!("{}", dir.display())
+    }
 }
