@@ -1,11 +1,11 @@
-use std::env;
+use std::env::{self, set_current_dir};
 #[allow(unused_imports)]
 use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
-use std::path;
+use std::path::{self, Path};
 use std::process::Command;
 
-const BUILTINS: &[&str] = &["echo", "exit", "type", "pwd"];
+const BUILTINS: &[&str] = &["echo", "exit", "type", "pwd", "cd"];
 
 fn main() {
     loop {
@@ -22,6 +22,7 @@ fn main() {
             "echo" => println!("{}", args),
             "type" => do_type(args),
             "pwd" => do_pwd(),
+            "cd" => do_cd(args),
             _ if let Some(exe_path) = find_executable(cmd) => {
                 let arg_i = args.split_whitespace();
                 let exe = exe_path.file_name().expect("bad file name");
@@ -69,5 +70,16 @@ fn find_executable(name: &str) -> Option<path::PathBuf> {
 fn do_pwd() {
     if let Ok(dir) = env::current_dir() {
         println!("{}", dir.display())
+    }
+}
+
+fn do_cd(path: &str) {
+    if path.starts_with("/") {
+        let dir = Path::new(path);
+        if dir.exists() {
+            set_current_dir(dir).expect("change directory");
+        } else {
+            println!("cd: {}: No such file or directory", path);
+        }
     }
 }
