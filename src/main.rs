@@ -114,6 +114,16 @@ fn parse_cmd(line: &str) -> Vec<String> {
             let _ = it.next();
             continue;
         }
+        if cc == BS && in_dq {
+            if end {
+                continue;
+            }
+            if cn == DQ || cn == BS || cn == '$' || cn == '`' || cn == '\n' {
+                buf.push(cn);
+                let _ = it.next();
+                continue;
+            }
+        }
         if !in_dq {
             if cc == SQ && cn == SQ {
                 let _ = it.next();
@@ -237,5 +247,10 @@ mod tests {
     fn backslash_in_squote() {
         let result = parse_cmd("'shell\\\nscript'");
         assert_eq!(result[0], "shell\\\nscript");
+    }
+    #[test]
+    fn backslash_in_dquote() {
+        let result = parse_cmd(r#""just'one'\\n'backslash""#);
+        assert_eq!(result[0], r#"just'one'\n'backslash"#);
     }
 }
