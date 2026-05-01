@@ -74,15 +74,11 @@ fn do_pwd() {
 }
 
 fn do_cd(path: &str) {
-    let mut path = path.to_owned();
-    if path == "~" || path.starts_with("~/") {
-        let home_path = env::var("HOME").unwrap_or("~".to_owned());
-        path = path.replace("~", &home_path);
-    }
+    let path = path.replace("~", env::var("HOME").unwrap().as_str());
     let dir = Path::new(&path);
     if dir.exists() {
         set_current_dir(dir).expect("change directory");
     } else {
-        println!("cd: {}: No such file or directory", path);
+        println!("cd: {}: No such file or directory", path.to_string());
     }
 }
