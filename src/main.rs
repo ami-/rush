@@ -232,4 +232,10 @@ mod tests {
         assert_eq!(result[0], r#"'"literal"#);
         assert_eq!(result[1], r#"quotes"'"#);
     }
+
+    #[test]
+    fn backslash_in_squote() {
+        let result = parse_cmd("'shell\\\nscript'");
+        assert_eq!(result[0], "shell\\\nscript");
+    }
 }
