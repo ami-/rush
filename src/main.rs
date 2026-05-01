@@ -10,6 +10,14 @@ fn main() {
         io::stdin()
             .read_line(&mut command)
             .expect("reading from io");
-        println!("{}: command not found", command.trim());
+
+        let cmd = command.trim();
+
+        match cmd {
+            "exit" => break,
+            cmd => {
+                println!("{}: command not found", cmd);
+            }
+        }
     }
 }
