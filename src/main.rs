@@ -88,41 +88,55 @@ fn do_cd(args: &[&str]) {
 
 fn parse_cmd(line: &str) -> Vec<String> {
     let mut out = vec![];
-    let mut in_squote = false;
+    let mut in_sq = false;
+    let mut in_dq = false;
+
+    const SQ: char = '\'';
+    const DQ: char = '"';
+
     let mut buf = String::new();
-    let mut last_is_q = false;
-    for c in line.chars() {
-        if c == '\'' && last_is_q {
-            last_is_q = false;
-            in_squote = !in_squote;
-            continue;
+
+    let mut cn: char;
+    let mut it = line.chars().peekable();
+    while let Some(cc) = it.next() {
+        cn = ' ';
+        if let Some(&c) = it.peek() {
+            cn = c
         }
-        if c != '\'' && last_is_q && !in_squote {
-            out.push(buf.clone());
-            buf.clear();
-            last_is_q = false;
+        if !in_dq {
+            if cc == SQ && cn == SQ {
+                let _ = it.next();
+                continue;
+            }
+            if cc == SQ && cn != SQ {
+                in_sq = !in_sq;
+                continue;
+            }
         }
-        if c == '\'' {
-            in_squote = !in_squote;
-            last_is_q = true;
-            continue;
+        if !in_sq {
+            if cc == DQ && cn == DQ {
+                let _ = it.next();
+                continue;
+            }
+            if cc == DQ && cn != DQ {
+                in_dq = !in_dq;
+                continue;
+            }
         }
-        if !in_squote && c.is_ascii_whitespace() {
+        if !in_sq && !in_dq && cc.is_ascii_whitespace() {
             if buf.len() > 0 {
                 out.push(buf.clone());
                 buf.clear();
             }
             continue;
         }
-        last_is_q = false;
-        buf.push(c);
+        buf.push(cc);
     }
     if buf.len() > 0 {
         out.push(buf)
     }
     out
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -133,6 +147,11 @@ mod tests {
         assert_eq!(result[0], "hello");
     }
     #[test]
+    fn empty_squotes() {
+        let result = parse_cmd("''hello");
+        assert_eq!(result[0], "hello");
+    }
+    #[test]
     fn simple_squotes() {
         let result = parse_cmd("'hello'    'bau'");
         assert_eq!(result[0], "hello");
@@ -140,15 +159,20 @@ mod tests {
     }
     #[test]
     fn concat_squotes() {
-        let result = parse_cmd("first 'hello''bau'");
+        let result = parse_cmd("first 'hello''bau' 'cucu'");
         assert_eq!(result[0], "first");
         assert_eq!(result[1], "hellobau");
+        assert_eq!(result[2], "cucu");
     }
     #[test]
-    fn multi_squotes() {
-        let result = parse_cmd("first 'hello''''bau'   'cucu'");
-        assert_eq!(result[0], "first");
-        assert_eq!(result[1], "hellobau");
+    fn multi_squotes_inside() {
+        let result = parse_cmd("'hello''''bau'");
+        assert_eq!(result[0], "hellobau");
+    }
+    #[test]
+    fn multi_squotes_outside() {
+        let result = parse_cmd("hello''''bau");
+        assert_eq!(result[0], "hellobau");
     }
 
     #[test]
@@ -163,5 +187,27 @@ mod tests {
     fn preserve_space() {
         let result = parse_cmd("'hello    world'");
         assert_eq!(result[0], "hello    world");
+    }
+    #[test]
+    fn simple_dquote() {
+        let result = parse_cmd(r#""hello    world""#);
+        assert_eq!(result[0], "hello    world");
+    }
+    #[test]
+    fn multi1_dquoe() {
+        let result = parse_cmd(r#""hello" 'bau'   "world""#);
+        assert_eq!(result[0], "hello");
+        assert_eq!(result[1], "bau");
+        assert_eq!(result[2], "world");
+    }
+    #[test]
+    fn multi2_dquoe() {
+        let result = parse_cmd(r#""hello""world""#);
+        assert_eq!(result[0], "helloworld");
+    }
+    #[test]
+    fn combined_dquoe() {
+        let result = parse_cmd(r#""hell's kitchen""#);
+        assert_eq!(result[0], "hell's kitchen");
     }
 }
