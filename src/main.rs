@@ -15,32 +15,31 @@ fn main() {
         let mut line = String::new();
         io::stdin().read_line(&mut line).expect("reading from io");
 
-        let (cmd, args) = parse_command(line.trim());
+        let tokens = parse_cmd(line.trim());
+        let args: Vec<&str> = tokens.iter().map(|s| s.as_str()).collect();
 
-        match cmd {
-            "exit" => break,
-            "echo" => println!("{}", args),
-            "type" => do_type(args),
-            "pwd" => do_pwd(),
-            "cd" => do_cd(args),
-            _ if let Some(exe_path) = find_executable(cmd) => {
-                let arg_i = args.split_whitespace();
+        match args.as_slice() {
+            [] => continue,
+            ["exit", ..] => break,
+            ["echo", args @ ..] => println!("{}", args.join(" ")),
+            ["type", args @ ..] => do_type(args),
+            ["pwd"] => do_pwd(),
+            ["cd", args @ ..] => do_cd(args),
+            _ if let Some(exe_path) = find_executable(args[0]) => {
                 let exe = exe_path.file_name().expect("bad file name");
-                let _ = Command::new(exe).args(arg_i).status();
+                let _ = Command::new(exe).args(args[1..].iter()).status();
             }
-            _ => println!("{}: command not found", cmd),
+            [cmd, ..] => println!("{}: command not found", cmd),
         }
     }
 }
 
-fn parse_command(line: &str) -> (&str, &str) {
-    let first_word = line.split_whitespace().next().unwrap_or("");
-    let rest = line[first_word.len()..].trim();
-    (first_word, rest)
-}
-
-fn do_type(line: &str) {
-    let (cmd, _) = parse_command(line);
+fn do_type(args: &[&str]) {
+    if args.len() == 0 {
+        println!("type: needs argument");
+        return;
+    }
+    let cmd = args[0];
     if BUILTINS.contains(&cmd) {
         println!("{} is a shell builtin", cmd);
         return;
@@ -73,12 +72,96 @@ fn do_pwd() {
     }
 }
 
-fn do_cd(path: &str) {
-    let path = path.replace("~", env::var("HOME").unwrap().as_str());
+fn do_cd(args: &[&str]) {
+    if args.len() == 0 {
+        println!("cd: needs argument");
+        return;
+    }
+    let path = args[0].replace("~", env::var("HOME").unwrap().as_str());
     let dir = Path::new(&path);
     if dir.exists() {
         set_current_dir(dir).expect("change directory");
     } else {
         println!("cd: {}: No such file or directory", path.to_string());
+    }
+}
+
+fn parse_cmd(line: &str) -> Vec<String> {
+    let mut out = vec![];
+    let mut in_squote = false;
+    let mut buf = String::new();
+    let mut last_is_q = false;
+    for c in line.chars() {
+        if c == '\'' && last_is_q {
+            last_is_q = false;
+            in_squote = !in_squote;
+            continue;
+        }
+        if c != '\'' && last_is_q && !in_squote {
+            out.push(buf.clone());
+            buf.clear();
+            last_is_q = false;
+        }
+        if c == '\'' {
+            in_squote = !in_squote;
+            last_is_q = true;
+            continue;
+        }
+        if !in_squote && c.is_ascii_whitespace() {
+            if buf.len() > 0 {
+                out.push(buf.clone());
+                buf.clear();
+            }
+            continue;
+        }
+        last_is_q = false;
+        buf.push(c);
+    }
+    if buf.len() > 0 {
+        out.push(buf)
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_squotes() {
+        let result = parse_cmd("hello");
+        assert_eq!(result[0], "hello");
+    }
+    #[test]
+    fn simple_squotes() {
+        let result = parse_cmd("'hello'    'bau'");
+        assert_eq!(result[0], "hello");
+        assert_eq!(result[1], "bau");
+    }
+    #[test]
+    fn concat_squotes() {
+        let result = parse_cmd("first 'hello''bau'");
+        assert_eq!(result[0], "first");
+        assert_eq!(result[1], "hellobau");
+    }
+    #[test]
+    fn multi_squotes() {
+        let result = parse_cmd("first 'hello''''bau'   'cucu'");
+        assert_eq!(result[0], "first");
+        assert_eq!(result[1], "hellobau");
+    }
+
+    #[test]
+    fn multi_squotes2() {
+        let result = parse_cmd("echo 'shell     test' 'hello''example' script''world");
+        assert_eq!(result[0], "echo");
+        assert_eq!(result[1], "shell     test");
+        assert_eq!(result[2], "helloexample");
+        assert_eq!(result[3], "scriptworld");
+    }
+    #[test]
+    fn preserve_space() {
+        let result = parse_cmd("'hello    world'");
+        assert_eq!(result[0], "hello    world");
     }
 }
