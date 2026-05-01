@@ -74,12 +74,10 @@ fn do_pwd() {
 }
 
 fn do_cd(path: &str) {
-    if path.starts_with("/") {
-        let dir = Path::new(path);
-        if dir.exists() {
-            set_current_dir(dir).expect("change directory");
-        } else {
-            println!("cd: {}: No such file or directory", path);
-        }
+    let dir = Path::new(path);
+    if dir.exists() {
+        set_current_dir(dir).expect("change directory");
+    } else {
+        println!("cd: {}: No such file or directory", path);
     }
 }
