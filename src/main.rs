@@ -6,14 +6,16 @@ fn main() {
         print!("$ ");
         io::stdout().flush().unwrap();
 
-        let mut command = String::new();
-        io::stdin()
-            .read_line(&mut command)
-            .expect("reading from io");
+        let mut line = String::new();
+        io::stdin().read_line(&mut line).expect("reading from io");
 
-        let cmd = command.trim();
+        let line = line.trim();
 
-        match cmd {
+        match line {
+            l if line.starts_with("echo ") || line == "echo" => {
+                let start = "echo".len();
+                println!("{}", &l[start..].trim());
+            }
             "exit" => break,
             cmd => {
                 println!("{}: command not found", cmd);
