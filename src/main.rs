@@ -93,6 +93,7 @@ fn parse_cmd(line: &str) -> Vec<String> {
 
     const SQ: char = '\'';
     const DQ: char = '"';
+    const BS: char = '\\';
 
     let mut buf = String::new();
 
@@ -100,8 +101,18 @@ fn parse_cmd(line: &str) -> Vec<String> {
     let mut it = line.chars().peekable();
     while let Some(cc) = it.next() {
         cn = ' ';
+        let mut end = true;
         if let Some(&c) = it.peek() {
-            cn = c
+            cn = c;
+            end = false;
+        }
+        if cc == BS && !in_sq && !in_dq {
+            if end {
+                continue;
+            }
+            buf.push(cn);
+            let _ = it.next();
+            continue;
         }
         if !in_dq {
             if cc == SQ && cn == SQ {
@@ -209,5 +220,15 @@ mod tests {
     fn combined_dquoe() {
         let result = parse_cmd(r#""hell's kitchen""#);
         assert_eq!(result[0], "hell's kitchen");
+    }
+    #[test]
+    fn combined2_dquoe() {
+        let result = parse_cmd(r#""'inside'""#);
+        assert_eq!(result[0], r#""'inside'""#);
+    }
+    #[test]
+    fn escape() {
+        let result = parse_cmd(r#"\'\"literal quotes\"\'"#);
+        assert_eq!(result[0], r#"\'\"literal quotes\"\'"#);
     }
 }
