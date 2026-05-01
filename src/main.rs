@@ -74,7 +74,12 @@ fn do_pwd() {
 }
 
 fn do_cd(path: &str) {
-    let dir = Path::new(path);
+    let mut path = path.to_owned();
+    if path == "~" || path.starts_with("~/") {
+        let home_path = env::var("HOME").unwrap_or("~".to_owned());
+        path = path.replace("~", &home_path);
+    }
+    let dir = Path::new(&path);
     if dir.exists() {
         set_current_dir(dir).expect("change directory");
     } else {
