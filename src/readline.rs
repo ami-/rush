@@ -27,7 +27,15 @@ impl Completer for ShellHelper {
             .map(|i| i + 1)
             .unwrap_or(0);
         if word_start != 0 {
-            return self.file_completer.complete(line, pos, ctx);
+            let (start, mut candidates) = self.file_completer.complete(line, pos, ctx)?;
+            for c in &mut candidates {
+                //println!("({}, {})", c.display, c.replacement);
+                //file completion space at the end (test fails)
+                if !c.replacement.ends_with('/') && !c.replacement.ends_with(' ') {
+                    c.replacement.push(' ');
+                }
+            }
+            return Ok((start, candidates));
         }
         let prefix = &line[..pos];
         let mut seen = std::collections::HashSet::new();
