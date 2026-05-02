@@ -176,7 +176,7 @@ fn do_complete(args: &[&str], err: &mut dyn Write) -> io::Result<()> {
     while idx < args.len() {
         if args[idx] == "-p" {
             let name = args.get(idx + 1).copied().unwrap_or("");
-            writeln!(err, "complete: {}: no completion sepecification", name)?;
+            writeln!(err, "complete: {}: no completion specification", name)?;
             idx += 2;
         } else {
             idx += 1
