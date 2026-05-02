@@ -35,8 +35,16 @@ impl Completer for ShellHelper {
         if word_start != 0 {
             //check builtin registered completions
             let cmd_name = line.split_ascii_whitespace().next().unwrap_or("");
+            let current_word = &line[word_start..pos];
+            let before_current = &line[..word_start.saturating_sub(1)];
+            let prev_word_start = before_current
+                .rfind(|c: char| c.is_ascii_whitespace())
+                .map(|i| i + 1)
+                .unwrap_or(0);
+            let prev_word = &before_current[prev_word_start..];
             if let Some(cmd_path) = self.completions.borrow().get(cmd_name) {
-                let candidates: Vec<Pair> = external_candidates(cmd_name, cmd_path);
+                let candidates: Vec<Pair> =
+                    external_candidates(cmd_name, cmd_path, current_word, prev_word);
                 if !candidates.is_empty() {
                     return Ok((word_start, candidates));
                 }
@@ -105,8 +113,8 @@ pub fn create_editor(
     Ok(rl)
 }
 
-fn external_candidates(_cmd: &str, path: &str) -> Vec<Pair> {
-    let args: Vec<&str> = Vec::new();
+fn external_candidates(cmd: &str, path: &str, current: &str, prev: &str) -> Vec<Pair> {
+    let args: Vec<&str> = vec![cmd, current, prev];
     if let Ok(output) = Command::new(path).args(args).output() {
         let out = String::from_utf8_lossy(&output.stdout)
             .lines()
