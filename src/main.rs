@@ -77,7 +77,7 @@ fn main() {
                 let _ = do_complete(args, &mut *err);
             }
             _ if let Some(exe_path) = find_executable(args[0]) => {
-                do_cmd(exe_path, &tail, redir);
+                let _ = do_cmd(exe_path, &tail, redir);
             }
             [cmd, ..] => eprintln!("{}: command not found", cmd),
         }
@@ -160,20 +160,27 @@ fn find_executable(name: &str) -> Option<path::PathBuf> {
     None
 }
 
-fn do_cmd(exe_path: PathBuf, args: &[&str], redir: Redirects) {
-    match redir.open_stdio() {
-        Ok((stdout, stderr)) => {
-            let exe = exe_path.file_name().expect("bad exe path");
-            let _ = Command::new(exe)
-                .args(args)
-                .stdout(stdout)
-                .stderr(stderr)
-                .status();
-        }
-        Err(e) => eprintln!("{}", e),
-    }
+fn do_cmd(exe_path: PathBuf, args: &[&str], redir: Redirects) -> io::Result<()> {
+    let (stdout, stderr) = redir.open_stdio()?;
+    let exe = exe_path.file_name().expect("bad exe path");
+    Command::new(exe)
+        .args(args)
+        .stdout(stdout)
+        .stderr(stderr)
+        .status()?;
+    Ok(())
 }
 
-fn do_complete(_argss: &[&str], _err: &mut dyn Write) -> io::Result<()> {
+fn do_complete(args: &[&str], err: &mut dyn Write) -> io::Result<()> {
+    let mut idx = 0;
+    while idx < args.len() {
+        if args[idx] == "-p" {
+            let name = args.get(idx + 1).copied().unwrap_or("");
+            writeln!(err, "complete: {}: no completion sepecification", name)?;
+            idx += 2;
+        } else {
+            idx += 1
+        }
+    }
     Ok(())
 }
