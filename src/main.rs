@@ -13,7 +13,7 @@ use rustyline::error::ReadlineError;
 use parse::parse_cmd;
 use redirect::{Redirects, split_redirect};
 
-pub const BUILTINS: &[&str] = &["echo", "exit", "type", "pwd", "cd"];
+pub const BUILTINS: &[&str] = &["echo", "exit", "type", "pwd", "cd", "complete"];
 
 fn main() {
     let mut rl = readline::create_editor().expect("create line editor");
@@ -68,7 +68,13 @@ fn main() {
                 let mut err = redir
                     .open_stderr_write()
                     .unwrap_or_else(|_| Box::new(io::stderr()));
-                do_cd(args, &mut *err);
+                let _ = do_cd(args, &mut *err);
+            }
+            ["complete", args @ ..] => {
+                let mut err = redir
+                    .open_stderr_write()
+                    .unwrap_or_else(|_| Box::new(io::stderr()));
+                let _ = do_complete(args, &mut *err);
             }
             _ if let Some(exe_path) = find_executable(args[0]) => {
                 do_cmd(exe_path, &tail, redir);
@@ -97,17 +103,16 @@ fn do_pwd(out: &mut dyn Write, _err: &mut dyn Write) -> io::Result<()> {
     writeln!(out, "{}", dir.display())
 }
 
-fn do_cd(args: &[&str], err: &mut dyn Write) {
+fn do_cd(args: &[&str], err: &mut dyn Write) -> io::Result<()> {
     if args.len() == 0 {
-        let _ = writeln!(err, "cd: needs argument");
-        return;
+        return writeln!(err, "cd: needs argument");
     }
     let path = args[0].replace("~", env::var("HOME").unwrap().as_str());
     let dir = Path::new(&path);
     if dir.exists() {
-        set_current_dir(dir).expect("change directory");
+        set_current_dir(dir)
     } else {
-        let _ = writeln!(err, "cd: {}: No such file or directory", path);
+        writeln!(err, "cd: {}: No such file or directory", path)
     }
 }
 
@@ -167,4 +172,8 @@ fn do_cmd(exe_path: PathBuf, args: &[&str], redir: Redirects) {
         }
         Err(e) => eprintln!("{}", e),
     }
+}
+
+fn do_complete(_argss: &[&str], _err: &mut dyn Write) -> io::Result<()> {
+    Ok(())
 }
