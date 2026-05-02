@@ -213,6 +213,14 @@ fn do_complete(
                     .insert(name.to_owned(), cmd.to_owned());
                 idx += 3;
             }
+            "-r" => {
+                let Some(cmd) = args.get(idx + 1).copied() else {
+                    idx += 1;
+                    continue;
+                };
+                registry.borrow_mut().remove(cmd);
+                idx += 2;
+            }
             _ => idx += 1,
         }
     }
