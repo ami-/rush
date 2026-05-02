@@ -2,6 +2,7 @@ mod parse;
 mod readline;
 mod redirect;
 
+use std::collections::HashMap;
 use std::env::{self, set_current_dir};
 use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
@@ -17,6 +18,7 @@ pub const BUILTINS: &[&str] = &["echo", "exit", "type", "pwd", "cd", "complete"]
 
 fn main() {
     let mut rl = readline::create_editor().expect("create line editor");
+    let mut completions: HashMap<String, String> = HashMap::new();
 
     loop {
         let line = match rl.readline("$ ") {
@@ -71,10 +73,13 @@ fn main() {
                 let _ = do_cd(args, &mut *err);
             }
             ["complete", args @ ..] => {
+                let mut out = redir
+                    .open_stdout_write()
+                    .unwrap_or_else(|_| Box::new(io::stdout()));
                 let mut err = redir
                     .open_stderr_write()
                     .unwrap_or_else(|_| Box::new(io::stderr()));
-                let _ = do_complete(args, &mut *err);
+                let _ = do_complete(args, &mut *out, &mut *err, &mut completions);
             }
             _ if let Some(exe_path) = find_executable(args[0]) => {
                 let _ = do_cmd(exe_path, &tail, redir);
@@ -171,15 +176,40 @@ fn do_cmd(exe_path: PathBuf, args: &[&str], redir: Redirects) -> io::Result<()> 
     Ok(())
 }
 
-fn do_complete(args: &[&str], err: &mut dyn Write) -> io::Result<()> {
+fn do_complete(
+    args: &[&str],
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+    registry: &mut HashMap<String, String>,
+) -> io::Result<()> {
     let mut idx = 0;
     while idx < args.len() {
-        if args[idx] == "-p" {
-            let name = args.get(idx + 1).copied().unwrap_or("");
-            writeln!(err, "complete: {}: no completion specification", name)?;
-            idx += 2;
-        } else {
-            idx += 1
+        match args[idx] {
+            "-p" => {
+                let Some(name) = args.get(idx + 1).copied() else {
+                    idx += 1;
+                    continue;
+                };
+                if let Some(cmd) = registry.get(name) {
+                    writeln!(out, "complete -C '{}' {}", cmd, name)?;
+                } else {
+                    writeln!(err, "complete: {}: no completion specification", name)?;
+                }
+                idx += 2;
+            }
+            "-C" => {
+                let Some(cmd) = args.get(idx + 1).copied() else {
+                    idx += 1;
+                    continue;
+                };
+                let Some(name) = args.get(idx + 2).copied() else {
+                    idx += 2;
+                    continue;
+                };
+                registry.insert(name.to_owned(), cmd.to_owned());
+                idx += 3;
+            }
+            _ => idx += 1,
         }
     }
     Ok(())
