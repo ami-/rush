@@ -69,7 +69,7 @@ fn main() {
                 [] => continue,
                 ["exit", ..] => break,
                 [cmd, rest @ .., "&"] => do_spawn(cmd, rest, &mut *out, &mut *err, &mut job_data),
-                ["history", ..] => do_history(rl.history(), &mut *out),
+                ["history", ..] => do_history(&tail, rl.history(), &mut *out),
                 _ if BUILTINS.contains(&args[0]) => run_builtin(
                     args[0],
                     &tail,
@@ -406,8 +406,16 @@ fn do_pipeline(
     Ok(())
 }
 
-fn do_history(history: &FileHistory, out: &mut dyn Write) -> io::Result<()> {
-    for i in 0..history.len() {
+fn do_history(args: &[&str], history: &FileHistory, out: &mut dyn Write) -> io::Result<()> {
+    let len = history.len();
+    let start = match args.first() {
+        Some(n) => match n.parse::<usize>() {
+            Ok(n) => len.saturating_sub(n),
+            Err(_) => 0,
+        },
+        None => 0,
+    };
+    for i in start..len {
         writeln!(out, "{:5}  {}", i + 1, &history[i])?;
     }
     Ok(())
