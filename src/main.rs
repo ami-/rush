@@ -260,8 +260,13 @@ fn do_jobs(
     jobs: &mut Vec<JobDescriptor>,
 ) -> io::Result<()> {
     //TODO: fg bg influence last
+    let len = jobs.len() as u32;
     for jd in jobs.iter_mut() {
-        let marker = "+";
+        let marker = match jd.number {
+            n if n == len => "+",
+            n if n + 1 == len => "-",
+            _ => " ",
+        };
         let status = match jd.child.try_wait() {
             Ok(Some(_)) => "Done",
             Ok(None) => "Running",
@@ -270,7 +275,11 @@ fn do_jobs(
                 continue;
             }
         };
-        writeln!(out, "[{}]{}  {: <24}{}", jd.number, marker, status, jd.cmd,)?;
+        writeln!(
+            out,
+            "[{}]{}  {: <24}{} &",
+            jd.number, marker, status, jd.cmd,
+        )?;
     }
 
     Ok(())
