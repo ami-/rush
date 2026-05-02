@@ -26,19 +26,10 @@ struct JobDescriptor {
     child: Child,
 }
 
-#[derive(Debug)]
-struct JobData {
-    jobs: Vec<JobDescriptor>,
-    next_number: u32,
-}
-
 fn main() {
     let completions: Rc<RefCell<HashMap<String, String>>> = Rc::new(RefCell::new(HashMap::new()));
     let mut rl = readline::create_editor(Rc::clone(&completions)).expect("create line editor");
-    let mut job_data = JobData {
-        jobs: Vec::new(),
-        next_number: 1,
-    };
+    let mut job_data: Vec<JobDescriptor> = Vec::new();
 
     loop {
         let line = match rl.readline("$ ") {
@@ -269,11 +260,10 @@ fn do_complete(
 fn do_jobs(
     out: &mut dyn Write,
     err: &mut dyn Write,
-    job_data: &mut JobData,
+    jobs: &mut Vec<JobDescriptor>,
     print_done_only: bool,
 ) -> io::Result<()> {
     //TODO: fg bg influence last
-    let jobs = &mut job_data.jobs;
     let last = jobs.iter().map(|jd| jd.number).max().unwrap_or(0);
     let prev = jobs
         .iter()
@@ -317,14 +307,11 @@ fn do_spawn(
     args: &[&str],
     out: &mut dyn Write,
     _err: &mut dyn Write,
-    job_data: &mut JobData,
+    jobs: &mut Vec<JobDescriptor>,
 ) -> io::Result<()> {
-    let jobs = &mut job_data.jobs;
-    let next = &mut job_data.next_number;
     let child = Command::new(cmd).args(args).spawn()?;
     let pid = child.id();
-    let number = *next;
-    *next += 1;
+    let number = jobs.iter().map(|jd| jd.number).max().unwrap_or(0) + 1;
     let cmd = [cmd]
         .iter()
         .chain(args.iter())
