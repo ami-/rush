@@ -29,9 +29,11 @@ impl Completer for ShellHelper {
         if word_start != 0 {
             let (start, mut candidates) = self.file_completer.complete(line, pos, ctx)?;
             for c in &mut candidates {
-                //println!("({}, {})", c.display, c.replacement);
-                //file completion space at the end (test fails)
-                if !c.replacement.ends_with('/') && !c.replacement.ends_with(' ') {
+                if c.replacement.ends_with('/') {
+                    // on dirs / is in replacement but not in display
+                    c.display.push('/');
+                } else if !c.replacement.ends_with(' ') {
+                    //make sure to add ' ' at the end of replacement
                     c.replacement.push(' ');
                 }
             }
