@@ -26,10 +26,19 @@ struct JobDescriptor {
     child: Child,
 }
 
+#[derive(Debug)]
+struct JobData {
+    jobs: Vec<JobDescriptor>,
+    next_number: u32,
+}
+
 fn main() {
     let completions: Rc<RefCell<HashMap<String, String>>> = Rc::new(RefCell::new(HashMap::new()));
     let mut rl = readline::create_editor(Rc::clone(&completions)).expect("create line editor");
-    let mut jobs: Vec<JobDescriptor> = Vec::new();
+    let mut job_data = JobData {
+        jobs: Vec::new(),
+        next_number: 1,
+    };
 
     loop {
         let line = match rl.readline("$ ") {
@@ -99,7 +108,7 @@ fn main() {
                 let mut err = redir
                     .open_stderr_write()
                     .unwrap_or_else(|_| Box::new(io::stderr()));
-                let _ = do_jobs(args, &mut *out, &mut *err, &mut jobs);
+                let _ = do_jobs(args, &mut *out, &mut *err, &mut job_data);
             }
             [cmd, args @ .., "&"] => {
                 let mut out = redir
@@ -108,7 +117,7 @@ fn main() {
                 let mut err = redir
                     .open_stderr_write()
                     .unwrap_or_else(|_| Box::new(io::stderr()));
-                let _ = do_spawn(cmd, args, &mut *out, &mut *err, &mut jobs);
+                let _ = do_spawn(cmd, args, &mut *out, &mut *err, &mut job_data);
             }
             _ if let Some(exe_path) = find_executable(args[0]) => {
                 let _ = do_cmd(exe_path, &tail, redir);
@@ -257,10 +266,12 @@ fn do_jobs(
     _args: &[&str],
     out: &mut dyn Write,
     err: &mut dyn Write,
-    jobs: &mut Vec<JobDescriptor>,
+    job_data: &mut JobData,
 ) -> io::Result<()> {
     //TODO: fg bg influence last
+    let jobs = &mut job_data.jobs;
     let len = jobs.len() as u32;
+    let mut to_remove = vec![];
     for jd in jobs.iter_mut() {
         let marker = match jd.number {
             n if n == len => "+",
@@ -275,12 +286,12 @@ fn do_jobs(
                 continue;
             }
         };
-        writeln!(
-            out,
-            "[{}]{}  {: <24}{} &",
-            jd.number, marker, status, jd.cmd,
-        )?;
+        if status == "Done" {
+            to_remove.push(jd.number);
+        }
+        writeln!(out, "[{}]{}  {: <24}{}", jd.number, marker, status, jd.cmd,)?;
     }
+    jobs.retain(|jd| !to_remove.contains(&jd.number));
 
     Ok(())
 }
@@ -289,11 +300,14 @@ fn do_spawn(
     args: &[&str],
     out: &mut dyn Write,
     _err: &mut dyn Write,
-    jobs: &mut Vec<JobDescriptor>,
+    job_data: &mut JobData,
 ) -> io::Result<()> {
+    let jobs = &mut job_data.jobs;
+    let next = &mut job_data.next_number;
     let child = Command::new(cmd).args(args).spawn()?;
     let pid = child.id();
-    let number = 1 + jobs.len() as u32;
+    let number = *next;
+    *next += 1;
     let cmd = [cmd]
         .iter()
         .chain(args.iter())
