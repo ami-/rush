@@ -8,7 +8,7 @@ use std::env::{self, set_current_dir};
 use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{self, Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command};
 use std::rc::Rc;
 
 use rustyline::error::ReadlineError;
@@ -23,6 +23,7 @@ struct JobDescriptor {
     number: u32,
     pid: u32,
     cmd: String,
+    child: Child,
 }
 
 fn main() {
@@ -254,10 +255,24 @@ fn do_complete(
 }
 fn do_jobs(
     _args: &[&str],
-    _out: &mut dyn Write,
-    _err: &mut dyn Write,
-    _jobs: &mut Vec<JobDescriptor>,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+    jobs: &mut Vec<JobDescriptor>,
 ) -> io::Result<()> {
+    //TODO: fg bg influence last
+    for jd in jobs.iter_mut() {
+        let marker = "+";
+        let status = match jd.child.try_wait() {
+            Ok(Some(_)) => "Done",
+            Ok(None) => "Running",
+            Err(e) => {
+                writeln!(err, "jobs: {}: {}", jd.pid, e)?;
+                continue;
+            }
+        };
+        writeln!(out, "[{}]{}  {: <24}{}", jd.number, marker, status, jd.cmd,)?;
+    }
+
     Ok(())
 }
 fn do_spawn(
@@ -277,7 +292,12 @@ fn do_spawn(
         .collect::<Vec<_>>()
         .join(" ");
 
-    jobs.push(JobDescriptor { number, pid, cmd });
+    jobs.push(JobDescriptor {
+        number,
+        pid,
+        cmd,
+        child,
+    });
 
     writeln!(out, "[{number}] {pid}")?;
 
