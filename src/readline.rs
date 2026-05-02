@@ -1,4 +1,5 @@
 use rustyline::completion::{Completer, Pair};
+use rustyline::config::BellStyle;
 use rustyline::highlight::Highlighter;
 use rustyline::hint::Hinter;
 use rustyline::history::DefaultHistory;
@@ -12,24 +13,36 @@ pub struct ShellHelper;
 impl Completer for ShellHelper {
     type Candidate = Pair;
 
-    fn complete(&self, line: &str, pos: usize, _ctx: &Context<'_>) -> rustyline::Result<(usize, Vec<Pair>)> {
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        _ctx: &Context<'_>,
+    ) -> rustyline::Result<(usize, Vec<Pair>)> {
         let before = &line[..pos];
-        let word_start = before.rfind(|c: char| c.is_ascii_whitespace())
+        let word_start = before
+            .rfind(|c: char| c.is_ascii_whitespace())
             .map(|i| i + 1)
             .unwrap_or(0);
         if word_start != 0 {
             return Ok((pos, vec![]));
         }
         let prefix = &line[..pos];
-        let candidates = BUILTINS.iter()
+        let candidates = BUILTINS
+            .iter()
             .filter(|&&b| b.starts_with(prefix))
-            .map(|&b| Pair { display: b.to_string(), replacement: format!("{} ", b) })
+            .map(|&b| Pair {
+                display: b.to_string(),
+                replacement: format!("{} ", b),
+            })
             .collect();
         Ok((0, candidates))
     }
 }
 
-impl Hinter for ShellHelper { type Hint = String; }
+impl Hinter for ShellHelper {
+    type Hint = String;
+}
 impl Highlighter for ShellHelper {}
 impl Validator for ShellHelper {}
 impl Helper for ShellHelper {}
@@ -39,6 +52,7 @@ pub fn create_editor() -> rustyline::Result<Editor<ShellHelper, DefaultHistory>>
         .auto_add_history(true)
         .history_ignore_dups(true)?
         .history_ignore_space(true)
+        .bell_style(BellStyle::Audible)
         .build();
     let mut rl = Editor::with_config(config)?;
     rl.set_helper(Some(ShellHelper));
