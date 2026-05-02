@@ -101,14 +101,14 @@ fn main() {
                     .unwrap_or_else(|_| Box::new(io::stderr()));
                 let _ = do_complete(args, &mut *out, &mut *err, &completions);
             }
-            ["jobs", args @ ..] => {
+            ["jobs", ..] => {
                 let mut out = redir
                     .open_stdout_write()
                     .unwrap_or_else(|_| Box::new(io::stdout()));
                 let mut err = redir
                     .open_stderr_write()
                     .unwrap_or_else(|_| Box::new(io::stderr()));
-                let _ = do_jobs(args, &mut *out, &mut *err, &mut job_data);
+                let _ = do_jobs(&mut *out, &mut *err, &mut job_data, false);
             }
             [cmd, args @ .., "&"] => {
                 let mut out = redir
@@ -124,6 +124,10 @@ fn main() {
             }
             [cmd, ..] => eprintln!("{}: command not found", cmd),
         }
+
+        let mut out = Box::new(io::stdout());
+        let mut err = Box::new(io::stderr());
+        let _ = do_jobs(&mut *out, &mut *err, &mut job_data, true);
     }
 }
 
@@ -263,10 +267,10 @@ fn do_complete(
     Ok(())
 }
 fn do_jobs(
-    _args: &[&str],
     out: &mut dyn Write,
     err: &mut dyn Write,
     job_data: &mut JobData,
+    print_done_only: bool,
 ) -> io::Result<()> {
     //TODO: fg bg influence last
     let jobs = &mut job_data.jobs;
@@ -298,7 +302,11 @@ fn do_jobs(
         if status == "Done" {
             to_remove.push(jd.number);
         }
-        writeln!(out, "[{}]{}  {: <24}{}", jd.number, marker, status, jd.cmd,)?;
+        if print_done_only && status != "Done" {
+            continue;
+        } else {
+            writeln!(out, "[{}]{}  {: <24}{}", jd.number, marker, status, jd.cmd,)?;
+        }
     }
     jobs.retain(|jd| !to_remove.contains(&jd.number));
 
