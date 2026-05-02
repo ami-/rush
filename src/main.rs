@@ -83,12 +83,13 @@ fn main() {
                 let _ = writeln!(err, "{}", e);
             }
 
-            let mut jobs_out = Box::new(io::stdout());
-            let mut jobs_err = Box::new(io::stderr());
-            let _ = do_jobs(&mut *jobs_out, &mut *jobs_err, &mut job_data, true);
         } else {
             let _ = do_pipeline(segments, &completions, &mut job_data);
         }
+
+        let mut jobs_out = Box::new(io::stdout());
+        let mut jobs_err = Box::new(io::stderr());
+        let _ = do_jobs(&mut *jobs_out, &mut *jobs_err, &mut job_data, true);
     }
 }
 
@@ -320,6 +321,7 @@ fn run_builtin(
         "cd" => do_cd(args, err),
         "complete" => do_complete(args, out, err, completions),
         "jobs" => do_jobs(out, err, jobs, false),
+        "exit" => Ok(()), // in a pipeline exit only closes this segment's pipe, not the shell
         _ => Ok(()),
     }
 }
