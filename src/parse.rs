@@ -63,6 +63,41 @@ pub fn parse_cmd(line: &str) -> Vec<String> {
             }
             continue;
         }
+        if !in_sq && !in_dq && cc == '|' {
+            if buf.len() > 0 {
+                out.push(buf.clone());
+                buf.clear();
+            }
+            out.push("|".to_string());
+            continue;
+        }
+        if !in_sq && !in_dq && cc == '&' {
+            if buf.ends_with('>') {
+                // part of 2>&1 or >&2 — keep glued to the buffer
+                buf.push('&');
+                continue;
+            }
+            if cn == '>' {
+                if !buf.is_empty() {
+                    out.push(buf.clone());
+                    buf.clear();
+                }
+                let _ = it.next(); // consume '>'
+                if it.peek() == Some(&'>') {
+                    let _ = it.next();
+                    out.push("&>>".to_string());
+                } else {
+                    out.push("&>".to_string());
+                }
+                continue;
+            }
+            if !buf.is_empty() {
+                out.push(buf.clone());
+                buf.clear();
+            }
+            out.push("&".to_string());
+            continue;
+        }
         buf.push(cc);
     }
     if buf.len() > 0 {
@@ -164,4 +199,18 @@ mod tests {
         let result = parse_cmd(r#""just'one'\\n'backslash""#);
         assert_eq!(result[0], r#"just'one'\n'backslash"#);
     }
+}
+pub fn split_pipeline(tokens: Vec<String>) -> Vec<Vec<String>> {
+    let mut segs: Vec<Vec<String>> = Vec::new();
+    let mut seg: Vec<String> = Vec::new();
+    for token in tokens {
+        if token == "|" {
+            segs.push(seg);
+            seg = Vec::new();
+        } else {
+            seg.push(token);
+        }
+    }
+    segs.push(seg);
+    segs
 }

@@ -8,12 +8,13 @@ use std::env::{self, set_current_dir};
 use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{self, Path, PathBuf};
-use std::process::{Child, Command};
+use std::process::{Child, Command, Stdio};
 use std::rc::Rc;
 
 use rustyline::error::ReadlineError;
 
 use parse::parse_cmd;
+use parse::split_pipeline;
 use redirect::{Redirects, split_redirect};
 
 pub const BUILTINS: &[&str] = &["echo", "exit", "type", "pwd", "cd", "complete", "jobs"];
@@ -42,83 +43,89 @@ fn main() {
         };
 
         let tokens = parse_cmd(line.trim());
-        let all_args: Vec<&str> = tokens.iter().map(|s| s.as_str()).collect();
-        if all_args.is_empty() {
-            continue;
-        }
-        let (tail, redir) = split_redirect(&all_args[1..]);
-        let mut args = vec![all_args[0]];
-        args.extend_from_slice(&tail);
+        let segments = split_pipeline(tokens);
 
-        match args.as_slice() {
-            [] => continue,
-            ["exit", ..] => break,
-            ["echo", args @ ..] => {
-                let _ = redir.open_stderr_write();
-                if let Ok(mut out) = redir.open_stdout_write() {
-                    let _ = writeln!(out, "{}", args.join(" "));
+        if segments.len() == 1 {
+            let all_args: Vec<&str> = segments[0].iter().map(|s| s.as_str()).collect();
+            if all_args.is_empty() {
+                continue;
+            }
+            let (tail, redir) = split_redirect(&all_args[1..]);
+            let mut args = vec![all_args[0]];
+            args.extend_from_slice(&tail);
+
+            match args.as_slice() {
+                [] => continue,
+                ["exit", ..] => break,
+                ["echo", args @ ..] => {
+                    let _ = redir.open_stderr_write();
+                    if let Ok(mut out) = redir.open_stdout_write() {
+                        let _ = writeln!(out, "{}", args.join(" "));
+                    }
                 }
+                ["type", args @ ..] => {
+                    let mut out = redir
+                        .open_stdout_write()
+                        .unwrap_or_else(|_| Box::new(io::stdout()));
+                    let mut err = redir
+                        .open_stderr_write()
+                        .unwrap_or_else(|_| Box::new(io::stderr()));
+                    let _ = do_type(args, &mut *out, &mut *err);
+                }
+                ["pwd"] => {
+                    let mut out = redir
+                        .open_stdout_write()
+                        .unwrap_or_else(|_| Box::new(io::stdout()));
+                    let mut err = redir
+                        .open_stderr_write()
+                        .unwrap_or_else(|_| Box::new(io::stderr()));
+                    let _ = do_pwd(&mut *out, &mut *err);
+                }
+                ["cd", args @ ..] => {
+                    let mut err = redir
+                        .open_stderr_write()
+                        .unwrap_or_else(|_| Box::new(io::stderr()));
+                    let _ = do_cd(args, &mut *err);
+                }
+                ["complete", args @ ..] => {
+                    let mut out = redir
+                        .open_stdout_write()
+                        .unwrap_or_else(|_| Box::new(io::stdout()));
+                    let mut err = redir
+                        .open_stderr_write()
+                        .unwrap_or_else(|_| Box::new(io::stderr()));
+                    let _ = do_complete(args, &mut *out, &mut *err, &completions);
+                }
+                ["jobs", ..] => {
+                    let mut out = redir
+                        .open_stdout_write()
+                        .unwrap_or_else(|_| Box::new(io::stdout()));
+                    let mut err = redir
+                        .open_stderr_write()
+                        .unwrap_or_else(|_| Box::new(io::stderr()));
+                    let _ = do_jobs(&mut *out, &mut *err, &mut job_data, false);
+                }
+                [cmd, args @ .., "&"] => {
+                    let mut out = redir
+                        .open_stdout_write()
+                        .unwrap_or_else(|_| Box::new(io::stdout()));
+                    let mut err = redir
+                        .open_stderr_write()
+                        .unwrap_or_else(|_| Box::new(io::stderr()));
+                    let _ = do_spawn(cmd, args, &mut *out, &mut *err, &mut job_data);
+                }
+                _ if let Some(exe_path) = find_executable(args[0]) => {
+                    let _ = do_cmd(exe_path, &tail, redir);
+                }
+                [cmd, ..] => eprintln!("{}: command not found", cmd),
             }
-            ["type", args @ ..] => {
-                let mut out = redir
-                    .open_stdout_write()
-                    .unwrap_or_else(|_| Box::new(io::stdout()));
-                let mut err = redir
-                    .open_stderr_write()
-                    .unwrap_or_else(|_| Box::new(io::stderr()));
-                let _ = do_type(args, &mut *out, &mut *err);
-            }
-            ["pwd"] => {
-                let mut out = redir
-                    .open_stdout_write()
-                    .unwrap_or_else(|_| Box::new(io::stdout()));
-                let mut err = redir
-                    .open_stderr_write()
-                    .unwrap_or_else(|_| Box::new(io::stderr()));
-                let _ = do_pwd(&mut *out, &mut *err);
-            }
-            ["cd", args @ ..] => {
-                let mut err = redir
-                    .open_stderr_write()
-                    .unwrap_or_else(|_| Box::new(io::stderr()));
-                let _ = do_cd(args, &mut *err);
-            }
-            ["complete", args @ ..] => {
-                let mut out = redir
-                    .open_stdout_write()
-                    .unwrap_or_else(|_| Box::new(io::stdout()));
-                let mut err = redir
-                    .open_stderr_write()
-                    .unwrap_or_else(|_| Box::new(io::stderr()));
-                let _ = do_complete(args, &mut *out, &mut *err, &completions);
-            }
-            ["jobs", ..] => {
-                let mut out = redir
-                    .open_stdout_write()
-                    .unwrap_or_else(|_| Box::new(io::stdout()));
-                let mut err = redir
-                    .open_stderr_write()
-                    .unwrap_or_else(|_| Box::new(io::stderr()));
-                let _ = do_jobs(&mut *out, &mut *err, &mut job_data, false);
-            }
-            [cmd, args @ .., "&"] => {
-                let mut out = redir
-                    .open_stdout_write()
-                    .unwrap_or_else(|_| Box::new(io::stdout()));
-                let mut err = redir
-                    .open_stderr_write()
-                    .unwrap_or_else(|_| Box::new(io::stderr()));
-                let _ = do_spawn(cmd, args, &mut *out, &mut *err, &mut job_data);
-            }
-            _ if let Some(exe_path) = find_executable(args[0]) => {
-                let _ = do_cmd(exe_path, &tail, redir);
-            }
-            [cmd, ..] => eprintln!("{}: command not found", cmd),
-        }
 
-        let mut out = Box::new(io::stdout());
-        let mut err = Box::new(io::stderr());
-        let _ = do_jobs(&mut *out, &mut *err, &mut job_data, true);
+            let mut out = Box::new(io::stdout());
+            let mut err = Box::new(io::stderr());
+            let _ = do_jobs(&mut *out, &mut *err, &mut job_data, true);
+        } else {
+            let _ = do_pipeline(segments);
+        }
     }
 }
 
@@ -328,5 +335,59 @@ fn do_spawn(
 
     writeln!(out, "[{number}] {pid}")?;
 
+    Ok(())
+}
+
+fn do_pipeline(segments: Vec<Vec<String>>) -> io::Result<()> {
+    let n = segments.len();
+    let mut children: Vec<std::process::Child> = Vec::new();
+    let mut prev_stdout: Option<std::process::ChildStdout> = None;
+
+    for (i, seg) in segments.iter().enumerate() {
+        let is_last = i == n - 1;
+
+        let all_args: Vec<&str> = seg.iter().map(|s| s.as_str()).collect();
+        if all_args.is_empty() {
+            continue;
+        }
+
+        let cmd_name = all_args[0];
+        let (args, redir) = split_redirect(&all_args[1..]);
+
+        // stdin: first command inherits, rest read from previous pipe
+        let stdin_stdio = match prev_stdout.take() {
+            Some(stdout) => Stdio::from(stdout),
+            None => Stdio::inherit(),
+        };
+
+        // stdout: last command uses redirects, others pipe to next
+        let (redir_stdout, redir_stderr) = redir.open_stdio()?;
+        let stdout_stdio = if is_last {
+            redir_stdout
+        } else {
+            Stdio::piped()
+        };
+
+        let exe = find_executable(cmd_name)
+            .ok_or_else(|| io::Error::other(format!("{cmd_name}: command not found")))?;
+
+        let mut child = Command::new(exe)
+            .args(&args)
+            .stdin(stdin_stdio)
+            .stdout(stdout_stdio)
+            .stderr(redir_stderr)
+            .spawn()?;
+
+        if !is_last {
+            prev_stdout = child.stdout.take(); // grab the pipe before storing child
+        }
+        children.push(child);
+    }
+
+    // Wait for all children AFTER all are spawned
+    // (spawning all first prevents deadlock when pipe buffers fill)
+    for mut child in children {
+        child.wait()?;
+    }
     Ok(())
 }
