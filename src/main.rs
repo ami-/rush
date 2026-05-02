@@ -111,6 +111,34 @@ fn do_cd(args: &[&str], err: &mut dyn Write) {
     }
 }
 
+pub fn executables_with_prefix(prefix: &str) -> Vec<String> {
+    use std::collections::HashSet;
+    let Ok(path) = env::var("PATH") else {
+        return vec![];
+    };
+    let mut names: HashSet<String> = HashSet::new();
+    for dir in env::split_paths(&path) {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+                continue;
+            };
+            if meta.is_file() && meta.permissions().mode() & 0o111 != 0 && name.starts_with(prefix)
+            {
+                names.insert(name);
+            }
+        }
+    }
+    let mut result: Vec<String> = names.into_iter().collect();
+    result.sort();
+    result
+}
+
 fn find_executable(name: &str) -> Option<path::PathBuf> {
     if let Ok(path) = env::var("PATH") {
         for dir in env::split_paths(&path) {

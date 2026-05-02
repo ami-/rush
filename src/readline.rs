@@ -6,7 +6,7 @@ use rustyline::history::DefaultHistory;
 use rustyline::validate::Validator;
 use rustyline::{Config, Context, Editor, Helper};
 
-use crate::BUILTINS;
+use crate::{BUILTINS, executables_with_prefix};
 
 pub struct ShellHelper;
 
@@ -28,14 +28,26 @@ impl Completer for ShellHelper {
             return Ok((pos, vec![]));
         }
         let prefix = &line[..pos];
-        let candidates = BUILTINS
+        let mut seen = std::collections::HashSet::new();
+        let mut candidates: Vec<Pair> = BUILTINS
             .iter()
             .filter(|&&b| b.starts_with(prefix))
-            .map(|&b| Pair {
-                display: b.to_string(),
-                replacement: format!("{} ", b),
+            .map(|&b| {
+                seen.insert(b.to_string());
+                Pair {
+                    display: b.to_string(),
+                    replacement: format!("{} ", b),
+                }
             })
             .collect();
+        for name in executables_with_prefix(prefix) {
+            if seen.insert(name.clone()) {
+                candidates.push(Pair {
+                    display: name.clone(),
+                    replacement: format!("{} ", name),
+                });
+            }
+        }
         Ok((0, candidates))
     }
 }
@@ -76,35 +88,45 @@ mod tests {
     }
 
     #[test]
-    fn empty_prefix_returns_all_builtins() {
-        let mut r = replacements("");
-        r.sort();
-        assert_eq!(r, vec!["cd ", "echo ", "exit ", "pwd ", "type "]);
+    fn empty_prefix_includes_all_builtins() {
+        let r = replacements("");
+        for builtin in crate::BUILTINS {
+            assert!(
+                r.contains(&format!("{} ", builtin)),
+                "missing builtin: {}",
+                builtin
+            );
+        }
     }
 
     #[test]
-    fn unique_prefix_completes_with_space() {
-        assert_eq!(replacements("ec"), vec!["echo "]);
-        assert_eq!(replacements("pw"), vec!["pwd "]);
-        assert_eq!(replacements("cd"), vec!["cd "]);
+    fn builtin_prefix_includes_builtin() {
+        assert!(replacements("ec").contains(&"echo ".to_string()));
+        assert!(replacements("pw").contains(&"pwd ".to_string()));
+        assert!(replacements("cd").contains(&"cd ".to_string()));
     }
 
     #[test]
-    fn ambiguous_prefix_returns_all_matches() {
-        let mut r = replacements("e");
-        r.sort();
-        assert_eq!(r, vec!["echo ", "exit "]);
+    fn ambiguous_builtin_prefix_includes_all_matches() {
+        let r = replacements("e");
+        assert!(r.contains(&"echo ".to_string()));
+        assert!(r.contains(&"exit ".to_string()));
     }
 
     #[test]
     fn exact_match_still_appends_space() {
-        assert_eq!(replacements("echo"), vec!["echo "]);
+        assert!(replacements("echo").contains(&"echo ".to_string()));
     }
 
     #[test]
     fn no_match_returns_empty() {
-        assert!(replacements("xyz").is_empty());
-        assert!(replacements("z").is_empty());
+        assert!(replacements("thisprefixdoesnotexist__").is_empty());
+    }
+
+    #[test]
+    fn builtins_not_duplicated_when_also_in_path() {
+        let r = replacements("echo");
+        assert_eq!(r.iter().filter(|s| s.as_str() == "echo ").count(), 1);
     }
 
     #[test]
