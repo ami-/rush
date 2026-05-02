@@ -1,11 +1,39 @@
 use std::env::{self, set_current_dir};
+use std::fs::{File, OpenOptions};
 #[allow(unused_imports)]
 use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
-use std::path::{self, Path};
-use std::process::Command;
+use std::path::{self, Path, PathBuf};
+use std::process::{Command, Stdio};
 
 const BUILTINS: &[&str] = &["echo", "exit", "type", "pwd", "cd"];
+
+#[derive(Debug)]
+enum OutDest {
+    Stdout,
+    File { append: bool, path: String },
+}
+
+impl OutDest {
+    fn open_file(&self) -> Result<Option<File>, io::Error> {
+        match self {
+            OutDest::Stdout => Ok(None),
+            OutDest::File { append, path } => {
+                if let Some(parent) = Path::new(path).parent() {
+                    if !parent.as_os_str().is_empty() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                }
+                let f: File = if *append {
+                    OpenOptions::new().append(true).create(true).open(path)?
+                } else {
+                    File::create(path)?
+                };
+                Ok(Some(f))
+            }
+        }
+    }
+}
 
 fn main() {
     loop {
@@ -16,38 +44,68 @@ fn main() {
         io::stdin().read_line(&mut line).expect("reading from io");
 
         let tokens = parse_cmd(line.trim());
-        let args: Vec<&str> = tokens.iter().map(|s| s.as_str()).collect();
+        let all_args: Vec<&str> = tokens.iter().map(|s| s.as_str()).collect();
+        if all_args.is_empty() {
+            //nothing to do
+            continue;
+        }
+        let (tail, out_dest) = split_redirect(&all_args[1..]);
+        let mut args = vec![all_args[0]];
+        args.extend_from_slice(&tail);
+
+        //println!("tail:{:?}\nout:{:?}", tail, out_dest);
 
         match args.as_slice() {
             [] => continue,
             ["exit", ..] => break,
-            ["echo", args @ ..] => println!("{}", args.join(" ")),
-            ["type", args @ ..] => do_type(args),
-            ["pwd"] => do_pwd(),
+            ["echo", args @ ..] => {
+                if let Ok(f) = out_dest.open_file() {
+                    let mut w: Box<dyn Write> = match f {
+                        Some(f) => Box::new(f),
+                        None => Box::new(io::stdout()),
+                    };
+                    let _ = writeln!(w, "{}", args.join(" "));
+                }
+            }
+            ["type", args @ ..] => {
+                if let Ok(f) = out_dest.open_file() {
+                    let mut w: Box<dyn Write> = match f {
+                        Some(f) => Box::new(f),
+                        None => Box::new(io::stdout()),
+                    };
+                    let _ = do_type(args, &mut *w);
+                }
+            }
+            ["pwd"] => {
+                if let Ok(f) = out_dest.open_file() {
+                    let mut w: Box<dyn Write> = match f {
+                        Some(f) => Box::new(f),
+                        None => Box::new(io::stdout()),
+                    };
+                    let _ = do_pwd(&mut *w);
+                }
+            }
             ["cd", args @ ..] => do_cd(args),
             _ if let Some(exe_path) = find_executable(args[0]) => {
-                let exe = exe_path.file_name().expect("bad file name");
-                let _ = Command::new(exe).args(args[1..].iter()).status();
+                do_cmd(exe_path, &tail, out_dest);
             }
             [cmd, ..] => println!("{}: command not found", cmd),
         }
     }
 }
 
-fn do_type(args: &[&str]) {
+fn do_type(args: &[&str], w: &mut dyn Write) -> io::Result<()> {
     if args.len() == 0 {
-        println!("type: needs argument");
-        return;
+        return writeln!(w, "type: needs argument");
     }
     let cmd = args[0];
     if BUILTINS.contains(&cmd) {
-        println!("{} is a shell builtin", cmd);
-        return;
+        return writeln!(w, "{} is a shell builtin", cmd);
     }
     match find_executable(cmd) {
-        Some(full_path) => println!("{} is {}", cmd, full_path.display()),
-        None => println!("{}: not found", cmd),
-    };
+        Some(full_path) => writeln!(w, "{} is {}", cmd, full_path.display()),
+        None => writeln!(w, "{}: not found", cmd),
+    }
 }
 
 fn find_executable(name: &str) -> Option<path::PathBuf> {
@@ -66,10 +124,9 @@ fn find_executable(name: &str) -> Option<path::PathBuf> {
     None
 }
 
-fn do_pwd() {
-    if let Ok(dir) = env::current_dir() {
-        println!("{}", dir.display())
-    }
+fn do_pwd(w: &mut dyn Write) -> io::Result<()> {
+    let dir = env::current_dir()?;
+    writeln!(w, "{}", dir.display())
 }
 
 fn do_cd(args: &[&str]) {
@@ -158,6 +215,41 @@ fn parse_cmd(line: &str) -> Vec<String> {
     }
     out
 }
+
+fn do_cmd(exe_path: PathBuf, args: &[&str], out_dest: OutDest) {
+    match out_dest.open_file() {
+        Ok(f) => {
+            let stdout = match f {
+                Some(f) => Stdio::from(f),
+                None => Stdio::inherit(),
+            };
+            let exe = exe_path.file_name().expect("bad exe path");
+            let _ = Command::new(exe).args(args).stdout(stdout).status();
+        }
+        Err(e) => eprintln!("{}", e),
+    }
+}
+
+fn split_redirect<'a>(args: &[&'a str]) -> (Vec<&'a str>, OutDest) {
+    if let Some(pos) = args
+        .iter()
+        .position(|&a| matches!(a, ">" | "1>" | ">>" | "1>>"))
+    {
+        let op = args[pos];
+        let target = args.get(pos + 1).copied().unwrap_or("").to_string();
+        let append = op == ">>" || op == "1>>";
+        (
+            args[..pos].to_vec(),
+            OutDest::File {
+                append,
+                path: target,
+            },
+        )
+    } else {
+        (args.to_vec(), OutDest::Stdout)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
