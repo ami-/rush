@@ -16,11 +16,16 @@ use rustyline::error::ReadlineError;
 use parse::parse_cmd;
 use redirect::{Redirects, split_redirect};
 
-pub const BUILTINS: &[&str] = &["echo", "exit", "type", "pwd", "cd", "complete"];
+pub const BUILTINS: &[&str] = &["echo", "exit", "type", "pwd", "cd", "complete", "jobs"];
+
+struct JobDescriptor {
+    // number: u32,
+}
 
 fn main() {
     let completions: Rc<RefCell<HashMap<String, String>>> = Rc::new(RefCell::new(HashMap::new()));
     let mut rl = readline::create_editor(Rc::clone(&completions)).expect("create line editor");
+    let mut jobs: HashMap<u32, JobDescriptor> = HashMap::new();
 
     loop {
         let line = match rl.readline("$ ") {
@@ -82,6 +87,15 @@ fn main() {
                     .open_stderr_write()
                     .unwrap_or_else(|_| Box::new(io::stderr()));
                 let _ = do_complete(args, &mut *out, &mut *err, &completions);
+            }
+            ["jobs", args @ ..] => {
+                let mut out = redir
+                    .open_stdout_write()
+                    .unwrap_or_else(|_| Box::new(io::stdout()));
+                let mut err = redir
+                    .open_stderr_write()
+                    .unwrap_or_else(|_| Box::new(io::stderr()));
+                let _ = do_jobs(args, &mut *out, &mut *err, &mut jobs);
             }
             _ if let Some(exe_path) = find_executable(args[0]) => {
                 let _ = do_cmd(exe_path, &tail, redir);
@@ -224,5 +238,13 @@ fn do_complete(
             _ => idx += 1,
         }
     }
+    Ok(())
+}
+fn do_jobs(
+    _argss: &[&str],
+    _out: &mut dyn Write,
+    _err: &mut dyn Write,
+    _jobs: &mut HashMap<u32, JobDescriptor>,
+) -> io::Result<()> {
     Ok(())
 }
