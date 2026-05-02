@@ -13,6 +13,7 @@ use std::process::{Child, Command, Stdio};
 use std::rc::Rc;
 
 use rustyline::error::ReadlineError;
+use rustyline::history::{FileHistory, History};
 
 use parse::parse_cmd;
 use parse::split_pipeline;
@@ -68,6 +69,7 @@ fn main() {
                 [] => continue,
                 ["exit", ..] => break,
                 [cmd, rest @ .., "&"] => do_spawn(cmd, rest, &mut *out, &mut *err, &mut job_data),
+                ["history", ..] => do_history(rl.history(), &mut *out),
                 _ if BUILTINS.contains(&args[0]) => run_builtin(
                     args[0],
                     &tail,
@@ -322,8 +324,8 @@ fn run_builtin(
         "cd" => do_cd(args, err),
         "complete" => do_complete(args, out, err, completions),
         "jobs" => do_jobs(out, err, jobs, false),
-        "history" => do_history(out, err),
-        "exit" => Ok(()), // in a pipeline exit only closes this segment's pipe, not the shell
+        "history" => Ok(()), // no history access in pipeline context
+        "exit" => Ok(()),    // in a pipeline exit only closes this segment's pipe, not the shell
         _ => Ok(()),
     }
 }
@@ -403,6 +405,10 @@ fn do_pipeline(
     }
     Ok(())
 }
-fn do_history(_out: &mut dyn Write, _err: &mut dyn Write) -> io::Result<()> {
+
+fn do_history(history: &FileHistory, out: &mut dyn Write) -> io::Result<()> {
+    for i in 0..history.len() {
+        writeln!(out, "{:5}  {}", i + 1, &history[i])?;
+    }
     Ok(())
 }
