@@ -270,12 +270,21 @@ fn do_jobs(
 ) -> io::Result<()> {
     //TODO: fg bg influence last
     let jobs = &mut job_data.jobs;
-    let len = jobs.len() as u32;
+    let last = jobs.iter().map(|jd| jd.number).max().unwrap_or(0);
+    let prev = jobs
+        .iter()
+        .filter(|jd| jd.number != last)
+        .map(|jd| jd.number)
+        .max();
     let mut to_remove = vec![];
     for jd in jobs.iter_mut() {
         let marker = match jd.number {
-            n if n == len => "+",
-            n if n + 1 == len => "-",
+            n if n == last => "+",
+            n if let Some(p) = prev
+                && n == p =>
+            {
+                "-"
+            }
             _ => " ",
         };
         let status = match jd.child.try_wait() {
