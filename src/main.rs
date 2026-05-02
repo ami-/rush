@@ -9,15 +9,22 @@ use std::process::{Command, Stdio};
 const BUILTINS: &[&str] = &["echo", "exit", "type", "pwd", "cd"];
 
 #[derive(Debug)]
-enum OutDest {
+enum Stream {
     Stdout,
+    Stderr,
+}
+
+#[derive(Debug)]
+enum OutDest {
+    Inherit,
     File { append: bool, path: String },
+    SameAs(Stream),
 }
 
 impl OutDest {
     fn open_file(&self) -> Result<Option<File>, io::Error> {
         match self {
-            OutDest::Stdout => Ok(None),
+            OutDest::Inherit | OutDest::SameAs(_) => Ok(None),
             OutDest::File { append, path } => {
                 if let Some(parent) = Path::new(path).parent() {
                     if !parent.as_os_str().is_empty() {
@@ -31,6 +38,91 @@ impl OutDest {
                 };
                 Ok(Some(f))
             }
+        }
+    }
+}
+
+#[derive(Debug)]
+struct Redirects {
+    stdout: OutDest,
+    stderr: OutDest,
+}
+
+impl Redirects {
+    fn none() -> Self {
+        Redirects {
+            stdout: OutDest::Inherit,
+            stderr: OutDest::Inherit,
+        }
+    }
+
+    fn open_stdio(&self) -> io::Result<(Stdio, Stdio)> {
+        match (&self.stdout, &self.stderr) {
+            // cycle: both inherit
+            (OutDest::SameAs(Stream::Stderr), OutDest::SameAs(Stream::Stdout)) => {
+                Ok((Stdio::inherit(), Stdio::inherit()))
+            }
+            // stdout -> stderr's destination
+            (OutDest::SameAs(Stream::Stderr), _) => {
+                let err_file = self.stderr.open_file()?;
+                let out = match &err_file {
+                    Some(f) => Stdio::from(f.try_clone()?),
+                    None => Stdio::inherit(),
+                };
+                let err = match err_file {
+                    Some(f) => Stdio::from(f),
+                    None => Stdio::inherit(),
+                };
+                Ok((out, err))
+            }
+            // stderr -> stdout's destination
+            (_, OutDest::SameAs(Stream::Stdout)) => {
+                let out_file = self.stdout.open_file()?;
+                let err = match &out_file {
+                    Some(f) => Stdio::from(f.try_clone()?),
+                    None => Stdio::inherit(),
+                };
+                let out = match out_file {
+                    Some(f) => Stdio::from(f),
+                    None => Stdio::inherit(),
+                };
+                Ok((out, err))
+            }
+            // independent destinations
+            _ => {
+                let out = match self.stdout.open_file()? {
+                    Some(f) => Stdio::from(f),
+                    None => Stdio::inherit(),
+                };
+                let err = match self.stderr.open_file()? {
+                    Some(f) => Stdio::from(f),
+                    None => Stdio::inherit(),
+                };
+                Ok((out, err))
+            }
+        }
+    }
+
+    fn open_stdout_write(&self) -> io::Result<Box<dyn Write>> {
+        match &self.stdout {
+            OutDest::SameAs(Stream::Stderr) => Ok(Box::new(io::stderr())),
+            _ => match self.stdout.open_file()? {
+                Some(f) => Ok(Box::new(f)),
+                None => Ok(Box::new(io::stdout())),
+            },
+        }
+    }
+
+    fn open_stderr_write(&self) -> io::Result<Box<dyn Write>> {
+        match &self.stderr {
+            OutDest::SameAs(Stream::Stdout) => match self.stdout.open_file()? {
+                Some(f) => Ok(Box::new(f)),
+                None => Ok(Box::new(io::stdout())),
+            },
+            _ => match self.stderr.open_file()? {
+                Some(f) => Ok(Box::new(f)),
+                None => Ok(Box::new(io::stderr())),
+            },
         }
     }
 }
@@ -49,62 +141,52 @@ fn main() {
             //nothing to do
             continue;
         }
-        let (tail, out_dest) = split_redirect(&all_args[1..]);
+        let (tail, redir) = split_redirect(&all_args[1..]);
         let mut args = vec![all_args[0]];
         args.extend_from_slice(&tail);
-
-        //println!("tail:{:?}\nout:{:?}", tail, out_dest);
 
         match args.as_slice() {
             [] => continue,
             ["exit", ..] => break,
             ["echo", args @ ..] => {
-                if let Ok(f) = out_dest.open_file() {
-                    let mut w: Box<dyn Write> = match f {
-                        Some(f) => Box::new(f),
-                        None => Box::new(io::stdout()),
-                    };
-                    let _ = writeln!(w, "{}", args.join(" "));
+                let _ = redir.open_stderr_write();
+                if let Ok(mut out) = redir.open_stdout_write() {
+                    let _ = writeln!(out, "{}", args.join(" "));
                 }
             }
             ["type", args @ ..] => {
-                if let Ok(f) = out_dest.open_file() {
-                    let mut w: Box<dyn Write> = match f {
-                        Some(f) => Box::new(f),
-                        None => Box::new(io::stdout()),
-                    };
-                    let _ = do_type(args, &mut *w);
-                }
+                let mut out = redir.open_stdout_write().unwrap_or_else(|_| Box::new(io::stdout()));
+                let mut err = redir.open_stderr_write().unwrap_or_else(|_| Box::new(io::stderr()));
+                let _ = do_type(args, &mut *out, &mut *err);
             }
             ["pwd"] => {
-                if let Ok(f) = out_dest.open_file() {
-                    let mut w: Box<dyn Write> = match f {
-                        Some(f) => Box::new(f),
-                        None => Box::new(io::stdout()),
-                    };
-                    let _ = do_pwd(&mut *w);
-                }
+                let mut out = redir.open_stdout_write().unwrap_or_else(|_| Box::new(io::stdout()));
+                let mut err = redir.open_stderr_write().unwrap_or_else(|_| Box::new(io::stderr()));
+                let _ = do_pwd(&mut *out, &mut *err);
             }
-            ["cd", args @ ..] => do_cd(args),
+            ["cd", args @ ..] => {
+                let mut err = redir.open_stderr_write().unwrap_or_else(|_| Box::new(io::stderr()));
+                do_cd(args, &mut *err);
+            }
             _ if let Some(exe_path) = find_executable(args[0]) => {
-                do_cmd(exe_path, &tail, out_dest);
+                do_cmd(exe_path, &tail, redir);
             }
-            [cmd, ..] => println!("{}: command not found", cmd),
+            [cmd, ..] => eprintln!("{}: command not found", cmd),
         }
     }
 }
 
-fn do_type(args: &[&str], w: &mut dyn Write) -> io::Result<()> {
+fn do_type(args: &[&str], out: &mut dyn Write, err: &mut dyn Write) -> io::Result<()> {
     if args.len() == 0 {
-        return writeln!(w, "type: needs argument");
+        return writeln!(err, "type: needs argument");
     }
     let cmd = args[0];
     if BUILTINS.contains(&cmd) {
-        return writeln!(w, "{} is a shell builtin", cmd);
+        return writeln!(out, "{} is a shell builtin", cmd);
     }
     match find_executable(cmd) {
-        Some(full_path) => writeln!(w, "{} is {}", cmd, full_path.display()),
-        None => writeln!(w, "{}: not found", cmd),
+        Some(full_path) => writeln!(out, "{} is {}", cmd, full_path.display()),
+        None => writeln!(err, "{}: not found", cmd),
     }
 }
 
@@ -124,14 +206,14 @@ fn find_executable(name: &str) -> Option<path::PathBuf> {
     None
 }
 
-fn do_pwd(w: &mut dyn Write) -> io::Result<()> {
+fn do_pwd(out: &mut dyn Write, _err: &mut dyn Write) -> io::Result<()> {
     let dir = env::current_dir()?;
-    writeln!(w, "{}", dir.display())
+    writeln!(out, "{}", dir.display())
 }
 
-fn do_cd(args: &[&str]) {
+fn do_cd(args: &[&str], err: &mut dyn Write) {
     if args.len() == 0 {
-        println!("cd: needs argument");
+        let _ = writeln!(err, "cd: needs argument");
         return;
     }
     let path = args[0].replace("~", env::var("HOME").unwrap().as_str());
@@ -139,7 +221,7 @@ fn do_cd(args: &[&str]) {
     if dir.exists() {
         set_current_dir(dir).expect("change directory");
     } else {
-        println!("cd: {}: No such file or directory", path.to_string());
+        let _ = writeln!(err, "cd: {}: No such file or directory", path);
     }
 }
 
@@ -216,38 +298,60 @@ fn parse_cmd(line: &str) -> Vec<String> {
     out
 }
 
-fn do_cmd(exe_path: PathBuf, args: &[&str], out_dest: OutDest) {
-    match out_dest.open_file() {
-        Ok(f) => {
-            let stdout = match f {
-                Some(f) => Stdio::from(f),
-                None => Stdio::inherit(),
-            };
+fn do_cmd(exe_path: PathBuf, args: &[&str], redir: Redirects) {
+    match redir.open_stdio() {
+        Ok((stdout, stderr)) => {
             let exe = exe_path.file_name().expect("bad exe path");
-            let _ = Command::new(exe).args(args).stdout(stdout).status();
+            let _ = Command::new(exe)
+                .args(args)
+                .stdout(stdout)
+                .stderr(stderr)
+                .status();
         }
         Err(e) => eprintln!("{}", e),
     }
 }
 
-fn split_redirect<'a>(args: &[&'a str]) -> (Vec<&'a str>, OutDest) {
-    if let Some(pos) = args
-        .iter()
-        .position(|&a| matches!(a, ">" | "1>" | ">>" | "1>>"))
-    {
-        let op = args[pos];
-        let target = args.get(pos + 1).copied().unwrap_or("").to_string();
-        let append = op == ">>" || op == "1>>";
-        (
-            args[..pos].to_vec(),
-            OutDest::File {
-                append,
-                path: target,
-            },
-        )
-    } else {
-        (args.to_vec(), OutDest::Stdout)
+fn split_redirect<'a>(args: &[&'a str]) -> (Vec<&'a str>, Redirects) {
+    let mut cmd_args = Vec::new();
+    let mut redir = Redirects::none();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i] {
+            ">" | "1>" | ">>" | "1>>" => {
+                let append = matches!(args[i], ">>" | "1>>");
+                let path = args.get(i + 1).copied().unwrap_or("").to_string();
+                redir.stdout = OutDest::File { append, path };
+                i += 2;
+            }
+            "2>" | "2>>" => {
+                let append = args[i] == "2>>";
+                let path = args.get(i + 1).copied().unwrap_or("").to_string();
+                redir.stderr = OutDest::File { append, path };
+                i += 2;
+            }
+            "&>" | "&>>" => {
+                let append = args[i] == "&>>";
+                let path = args.get(i + 1).copied().unwrap_or("").to_string();
+                redir.stdout = OutDest::File { append, path };
+                redir.stderr = OutDest::SameAs(Stream::Stdout);
+                i += 2;
+            }
+            "2>&1" => {
+                redir.stderr = OutDest::SameAs(Stream::Stdout);
+                i += 1;
+            }
+            "1>&2" | ">&2" => {
+                redir.stdout = OutDest::SameAs(Stream::Stderr);
+                i += 1;
+            }
+            _ => {
+                cmd_args.push(args[i]);
+                i += 1;
+            }
+        }
     }
+    (cmd_args, redir)
 }
 
 #[cfg(test)]
