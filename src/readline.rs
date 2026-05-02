@@ -1,4 +1,4 @@
-use rustyline::completion::{Completer, Pair};
+use rustyline::completion::{Completer, FilenameCompleter, Pair};
 use rustyline::config::BellStyle;
 use rustyline::highlight::Highlighter;
 use rustyline::hint::Hinter;
@@ -8,7 +8,9 @@ use rustyline::{Config, Context, Editor, Helper};
 
 use crate::{BUILTINS, executables_with_prefix};
 
-pub struct ShellHelper;
+pub struct ShellHelper {
+    file_completer: FilenameCompleter,
+}
 
 impl Completer for ShellHelper {
     type Candidate = Pair;
@@ -17,7 +19,7 @@ impl Completer for ShellHelper {
         &self,
         line: &str,
         pos: usize,
-        _ctx: &Context<'_>,
+        ctx: &Context<'_>,
     ) -> rustyline::Result<(usize, Vec<Pair>)> {
         let before = &line[..pos];
         let word_start = before
@@ -25,7 +27,7 @@ impl Completer for ShellHelper {
             .map(|i| i + 1)
             .unwrap_or(0);
         if word_start != 0 {
-            return Ok((pos, vec![]));
+            return self.file_completer.complete(line, pos, ctx);
         }
         let prefix = &line[..pos];
         let mut seen = std::collections::HashSet::new();
@@ -68,7 +70,9 @@ pub fn create_editor() -> rustyline::Result<Editor<ShellHelper, DefaultHistory>>
         .completion_type(rustyline::CompletionType::List)
         .build();
     let mut rl = Editor::with_config(config)?;
-    rl.set_helper(Some(ShellHelper));
+    rl.set_helper(Some(ShellHelper {
+        file_completer: FilenameCompleter::new(),
+    }));
     Ok(rl)
 }
 
@@ -80,7 +84,11 @@ mod tests {
     fn complete(line: &str) -> Vec<Pair> {
         let history = DefaultHistory::new();
         let ctx = Context::new(&history);
-        let (_, candidates) = ShellHelper.complete(line, line.len(), &ctx).unwrap();
+        let (_, candidates) = ShellHelper {
+            file_completer: FilenameCompleter::new(),
+        }
+        .complete(line, line.len(), &ctx)
+        .unwrap();
         candidates
     }
 
@@ -131,17 +139,14 @@ mod tests {
     }
 
     #[test]
-    fn mid_argument_returns_empty() {
-        assert!(complete("echo ").is_empty());
-        assert!(complete("echo he").is_empty());
-        assert!(complete("type ec").is_empty());
-    }
-
-    #[test]
     fn start_position_is_zero_on_match() {
         let history = DefaultHistory::new();
         let ctx = Context::new(&history);
-        let (start, _) = ShellHelper.complete("ec", 2, &ctx).unwrap();
+        let (start, _) = ShellHelper {
+            file_completer: FilenameCompleter::new(),
+        }
+        .complete("ec", 2, &ctx)
+        .unwrap();
         assert_eq!(start, 0);
     }
 }
