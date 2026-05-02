@@ -65,6 +65,7 @@ pub fn create_editor() -> rustyline::Result<Editor<ShellHelper, DefaultHistory>>
         .history_ignore_dups(true)?
         .history_ignore_space(true)
         .bell_style(BellStyle::Audible)
+        .completion_type(rustyline::CompletionType::List)
         .build();
     let mut rl = Editor::with_config(config)?;
     rl.set_helper(Some(ShellHelper));
