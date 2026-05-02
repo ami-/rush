@@ -18,7 +18,9 @@ use parse::parse_cmd;
 use parse::split_pipeline;
 use redirect::{Redirects, split_redirect};
 
-pub const BUILTINS: &[&str] = &["echo", "exit", "type", "pwd", "cd", "complete", "jobs"];
+pub const BUILTINS: &[&str] = &[
+    "echo", "exit", "type", "pwd", "cd", "complete", "jobs", "history",
+];
 
 #[derive(Debug)]
 struct JobDescriptor {
@@ -82,7 +84,6 @@ fn main() {
             if let Err(e) = result {
                 let _ = writeln!(err, "{}", e);
             }
-
         } else {
             let _ = do_pipeline(segments, &completions, &mut job_data);
         }
@@ -321,6 +322,7 @@ fn run_builtin(
         "cd" => do_cd(args, err),
         "complete" => do_complete(args, out, err, completions),
         "jobs" => do_jobs(out, err, jobs, false),
+        "history" => do_history(out, err),
         "exit" => Ok(()), // in a pipeline exit only closes this segment's pipe, not the shell
         _ => Ok(()),
     }
@@ -399,5 +401,8 @@ fn do_pipeline(
     for mut child in children {
         child.wait()?;
     }
+    Ok(())
+}
+fn do_history(_out: &mut dyn Write, _err: &mut dyn Write) -> io::Result<()> {
     Ok(())
 }
