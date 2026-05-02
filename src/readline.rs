@@ -1,3 +1,8 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::process::Command;
+use std::rc::Rc;
+
 use rustyline::completion::{Completer, FilenameCompleter, Pair};
 use rustyline::config::BellStyle;
 use rustyline::highlight::Highlighter;
@@ -10,6 +15,7 @@ use crate::{BUILTINS, executables_with_prefix};
 
 pub struct ShellHelper {
     file_completer: FilenameCompleter,
+    completions: Rc<RefCell<HashMap<String, String>>>,
 }
 
 impl Completer for ShellHelper {
@@ -27,6 +33,16 @@ impl Completer for ShellHelper {
             .map(|i| i + 1)
             .unwrap_or(0);
         if word_start != 0 {
+            //check builtin registered completions
+            let cmd_name = line.split_ascii_whitespace().next().unwrap_or("");
+            if let Some(cmd_path) = self.completions.borrow().get(cmd_name) {
+                let candidates: Vec<Pair> = external_candidates(cmd_name, cmd_path);
+                if !candidates.is_empty() {
+                    return Ok((word_start, candidates));
+                }
+            };
+
+            //file completions
             let (start, mut candidates) = self.file_completer.complete(line, pos, ctx)?;
             for c in &mut candidates {
                 if c.replacement.ends_with('/') {
@@ -71,7 +87,9 @@ impl Highlighter for ShellHelper {}
 impl Validator for ShellHelper {}
 impl Helper for ShellHelper {}
 
-pub fn create_editor() -> rustyline::Result<Editor<ShellHelper, DefaultHistory>> {
+pub fn create_editor(
+    completions: Rc<RefCell<HashMap<String, String>>>,
+) -> rustyline::Result<Editor<ShellHelper, DefaultHistory>> {
     let config = Config::builder()
         .auto_add_history(true)
         .history_ignore_dups(true)?
@@ -82,8 +100,24 @@ pub fn create_editor() -> rustyline::Result<Editor<ShellHelper, DefaultHistory>>
     let mut rl = Editor::with_config(config)?;
     rl.set_helper(Some(ShellHelper {
         file_completer: FilenameCompleter::new(),
+        completions: completions,
     }));
     Ok(rl)
+}
+
+fn external_candidates(_cmd: &str, path: &str) -> Vec<Pair> {
+    let args: Vec<&str> = Vec::new();
+    if let Ok(output) = Command::new(path).args(args).output() {
+        let out = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|line| Pair {
+                display: line.to_string(),
+                replacement: format!("{} ", line),
+            })
+            .collect();
+        return out;
+    }
+    vec![]
 }
 
 #[cfg(test)]
@@ -96,6 +130,7 @@ mod tests {
         let ctx = Context::new(&history);
         let (_, candidates) = ShellHelper {
             file_completer: FilenameCompleter::new(),
+            completions: Rc::new(RefCell::new(HashMap::new())),
         }
         .complete(line, line.len(), &ctx)
         .unwrap();
@@ -154,6 +189,7 @@ mod tests {
         let ctx = Context::new(&history);
         let (start, _) = ShellHelper {
             file_completer: FilenameCompleter::new(),
+            completions: Rc::new(RefCell::new(HashMap::new())),
         }
         .complete("ec", 2, &ctx)
         .unwrap();

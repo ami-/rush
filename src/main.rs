@@ -2,12 +2,14 @@ mod parse;
 mod readline;
 mod redirect;
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::env::{self, set_current_dir};
 use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{self, Path, PathBuf};
 use std::process::Command;
+use std::rc::Rc;
 
 use rustyline::error::ReadlineError;
 
@@ -17,8 +19,8 @@ use redirect::{Redirects, split_redirect};
 pub const BUILTINS: &[&str] = &["echo", "exit", "type", "pwd", "cd", "complete"];
 
 fn main() {
-    let mut rl = readline::create_editor().expect("create line editor");
-    let mut completions: HashMap<String, String> = HashMap::new();
+    let completions: Rc<RefCell<HashMap<String, String>>> = Rc::new(RefCell::new(HashMap::new()));
+    let mut rl = readline::create_editor(Rc::clone(&completions)).expect("create line editor");
 
     loop {
         let line = match rl.readline("$ ") {
@@ -79,7 +81,7 @@ fn main() {
                 let mut err = redir
                     .open_stderr_write()
                     .unwrap_or_else(|_| Box::new(io::stderr()));
-                let _ = do_complete(args, &mut *out, &mut *err, &mut completions);
+                let _ = do_complete(args, &mut *out, &mut *err, &completions);
             }
             _ if let Some(exe_path) = find_executable(args[0]) => {
                 let _ = do_cmd(exe_path, &tail, redir);
@@ -180,7 +182,7 @@ fn do_complete(
     args: &[&str],
     out: &mut dyn Write,
     err: &mut dyn Write,
-    registry: &mut HashMap<String, String>,
+    registry: &RefCell<HashMap<String, String>>,
 ) -> io::Result<()> {
     let mut idx = 0;
     while idx < args.len() {
@@ -190,7 +192,7 @@ fn do_complete(
                     idx += 1;
                     continue;
                 };
-                if let Some(cmd) = registry.get(name) {
+                if let Some(cmd) = registry.borrow().get(name) {
                     writeln!(out, "complete -C '{}' {}", cmd, name)?;
                 } else {
                     writeln!(err, "complete: {}: no completion specification", name)?;
@@ -206,7 +208,9 @@ fn do_complete(
                     idx += 2;
                     continue;
                 };
-                registry.insert(name.to_owned(), cmd.to_owned());
+                registry
+                    .borrow_mut()
+                    .insert(name.to_owned(), cmd.to_owned());
                 idx += 3;
             }
             _ => idx += 1,
