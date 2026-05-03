@@ -36,8 +36,13 @@ fn main() {
     let ignore_duplicates = false;
     let mut rl = readline::create_editor(Rc::clone(&completions), ignore_duplicates)
         .expect("create line editor");
+
+    if let Ok(path) = env::var("HISTFILE") {
+        let _ = history_from_file(rl.history_mut(), &path)
+            .inspect_err(|err| eprintln!("history: file: {}, err:{}", path, err));
+    }
     //marker for history append
-    let mut history_append_mark: usize = 0;
+    let mut history_append_mark: usize = rl.history().len();
 
     let mut job_data: Vec<JobDescriptor> = Vec::new();
 
@@ -103,6 +108,11 @@ fn main() {
         let mut jobs_out = Box::new(io::stdout());
         let mut jobs_err = Box::new(io::stderr());
         let _ = do_jobs(&mut *jobs_out, &mut *jobs_err, &mut job_data, true);
+    }
+
+    if let Ok(path) = env::var("HISTFILE") {
+        let _ = history_to_file(&history_append_mark, rl.history_mut(), &path, true)
+            .inspect_err(|err| eprintln!("history: writing file: {}, err:{}", path, err));
     }
 }
 
@@ -436,10 +446,7 @@ fn do_history(
                     return writeln!(err, "history: -r: missing filename");
                 };
                 //history.load(Path::new(path)).map_err(io::Error::other)?;
-                let text = std::fs::read_to_string(path)?;
-                for line in text.lines() {
-                    history.add(line).map_err(io::Error::other)?;
-                }
+                history_from_file(history, path)?;
 
                 idx += 2;
             }
@@ -482,6 +489,13 @@ fn show_history(
 ) -> io::Result<()> {
     for i in range {
         writeln!(out, "{:5}  {}", i + 1, &history[i])?;
+    }
+    Ok(())
+}
+fn history_from_file(history: &mut FileHistory, path: &str) -> io::Result<()> {
+    let text = std::fs::read_to_string(path)?;
+    for line in text.lines() {
+        history.add(line).map_err(io::Error::other)?;
     }
     Ok(())
 }
