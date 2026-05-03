@@ -1,6 +1,7 @@
 mod parse;
 mod readline;
 mod redirect;
+mod variables;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -19,6 +20,7 @@ use parse::parse_cmd;
 use parse::split_pipeline;
 use readline::ShellEditor;
 use redirect::{Redirects, split_redirect};
+use variables::expand_vars;
 
 pub const BUILTINS: &[&str] = &[
     "echo", "exit", "type", "pwd", "cd", "complete", "jobs", "history", "declare",
@@ -68,7 +70,9 @@ fn main() {
             }
         };
 
-        let tokens = parse_cmd(line.trim());
+        let mut tokens = parse_cmd(line.trim());
+        expand_vars(&state.decls, &mut tokens);
+
         let segments = split_pipeline(tokens);
 
         if segments.len() == 1 {
