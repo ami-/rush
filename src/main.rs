@@ -422,21 +422,28 @@ fn do_history(
                 let Some(&path) = args.get(idx + 1) else {
                     return writeln!(err, "history: -r: missing filename");
                 };
-                history.load(Path::new(path)).map_err(io::Error::other)?;
+                //history.load(Path::new(path)).map_err(io::Error::other)?;
+                let text = std::fs::read_to_string(path)?;
+                for line in text.lines() {
+                    history.add(line).map_err(io::Error::other)?;
+                }
+
                 idx += 2;
             }
             "-w" => {
                 let Some(&path) = args.get(idx + 1) else {
                     return writeln!(err, "history: -w: missing filename");
                 };
-                history.save(Path::new(path)).map_err(io::Error::other)?;
+                //history.save(Path::new(path)).map_err(io::Error::other)?;
+                history_to_file(history, path, false)?;
                 idx += 2;
             }
             "-a" => {
                 let Some(&path) = args.get(idx + 1) else {
                     return writeln!(err, "history: -a: missing filename");
                 };
-                history.append(Path::new(path)).map_err(io::Error::other)?;
+                //history.append(Path::new(path)).map_err(io::Error::other)?;
+                history_to_file(history, path, true)?;
                 idx += 2;
             }
             n => {
@@ -460,6 +467,22 @@ fn show_history(
 ) -> io::Result<()> {
     for i in range {
         writeln!(out, "{:5}  {}", i + 1, &history[i])?;
+    }
+    Ok(())
+}
+fn history_to_file(history: &FileHistory, path: &str, append: bool) -> io::Result<()> {
+    use std::io::BufWriter;
+    let file = if append {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?
+    } else {
+        std::fs::File::create(path)?
+    };
+    let mut w = BufWriter::new(file);
+    for i in 0..history.len() {
+        writeln!(w, "{}", &history[i])?;
     }
     Ok(())
 }
