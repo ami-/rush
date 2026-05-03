@@ -69,7 +69,7 @@ fn main() {
                 [] => continue,
                 ["exit", ..] => break,
                 [cmd, rest @ .., "&"] => do_spawn(cmd, rest, &mut *out, &mut *err, &mut job_data),
-                ["history", ..] => do_history(&tail, rl.history(), &mut *out),
+                ["history", ..] => do_history(&tail, rl.history_mut(), &mut *out, &mut *err),
                 _ if BUILTINS.contains(&args[0]) => run_builtin(
                     args[0],
                     &tail,
@@ -406,16 +406,59 @@ fn do_pipeline(
     Ok(())
 }
 
-fn do_history(args: &[&str], history: &FileHistory, out: &mut dyn Write) -> io::Result<()> {
-    let len = history.len();
-    let start = match args.first() {
-        Some(n) => match n.parse::<usize>() {
-            Ok(n) => len.saturating_sub(n),
-            Err(_) => 0,
-        },
-        None => 0,
-    };
-    for i in start..len {
+fn do_history(
+    args: &[&str],
+    history: &mut FileHistory,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> io::Result<()> {
+    if args.is_empty() {
+        return show_history(0..history.len(), history, out);
+    }
+    let mut idx = 0;
+    while idx < args.len() {
+        match args[idx] {
+            "-r" => {
+                let Some(&path) = args.get(idx + 1) else {
+                    return writeln!(err, "history: -r: missing filename");
+                };
+                history.load(Path::new(path)).map_err(io::Error::other)?;
+                idx += 2;
+            }
+            "-w" => {
+                let Some(&path) = args.get(idx + 1) else {
+                    return writeln!(err, "history: -w: missing filename");
+                };
+                history.save(Path::new(path)).map_err(io::Error::other)?;
+                idx += 2;
+            }
+            "-a" => {
+                let Some(&path) = args.get(idx + 1) else {
+                    return writeln!(err, "history: -a: missing filename");
+                };
+                history.append(Path::new(path)).map_err(io::Error::other)?;
+                idx += 2;
+            }
+            n => {
+                let len = history.len();
+                let start = n
+                    .parse::<usize>()
+                    .map(|n| len.saturating_sub(n))
+                    .unwrap_or(0);
+                show_history(start..len, history, out)?;
+                idx += 1;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn show_history(
+    range: std::ops::Range<usize>,
+    history: &FileHistory,
+    out: &mut dyn Write,
+) -> io::Result<()> {
+    for i in range {
         writeln!(out, "{:5}  {}", i + 1, &history[i])?;
     }
     Ok(())
