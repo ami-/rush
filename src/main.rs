@@ -34,6 +34,9 @@ struct JobDescriptor {
 fn main() {
     let completions: Rc<RefCell<HashMap<String, String>>> = Rc::new(RefCell::new(HashMap::new()));
     let mut rl = readline::create_editor(Rc::clone(&completions)).expect("create line editor");
+    //marker for history append
+    let mut history_append_mark: usize = 0;
+
     let mut job_data: Vec<JobDescriptor> = Vec::new();
 
     loop {
@@ -69,7 +72,12 @@ fn main() {
                 [] => continue,
                 ["exit", ..] => break,
                 [cmd, rest @ .., "&"] => do_spawn(cmd, rest, &mut *out, &mut *err, &mut job_data),
-                ["history", ..] => do_history(&tail, rl.history_mut(), &mut *out, &mut *err),
+                ["history", ..] => do_history(
+                    &tail,
+                    (&mut history_append_mark, rl.history_mut()),
+                    &mut *out,
+                    &mut *err,
+                ),
                 _ if BUILTINS.contains(&args[0]) => run_builtin(
                     args[0],
                     &tail,
@@ -408,10 +416,13 @@ fn do_pipeline(
 
 fn do_history(
     args: &[&str],
-    history: &mut FileHistory,
+    history_data: (&mut usize, &mut FileHistory),
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> io::Result<()> {
+    let append_mark = history_data.0;
+    let history = history_data.1;
+
     if args.is_empty() {
         return show_history(0..history.len(), history, out);
     }
@@ -435,7 +446,7 @@ fn do_history(
                     return writeln!(err, "history: -w: missing filename");
                 };
                 //history.save(Path::new(path)).map_err(io::Error::other)?;
-                history_to_file(history, path, false)?;
+                history_to_file(append_mark, history, path, false)?;
                 idx += 2;
             }
             "-a" => {
@@ -443,7 +454,9 @@ fn do_history(
                     return writeln!(err, "history: -a: missing filename");
                 };
                 //history.append(Path::new(path)).map_err(io::Error::other)?;
-                history_to_file(history, path, true)?;
+                history_to_file(append_mark, history, path, true)?;
+                //keep track of mark
+                *append_mark = history.len();
                 idx += 2;
             }
             n => {
@@ -470,7 +483,12 @@ fn show_history(
     }
     Ok(())
 }
-fn history_to_file(history: &FileHistory, path: &str, append: bool) -> io::Result<()> {
+fn history_to_file(
+    append_mark: &usize,
+    history: &FileHistory,
+    path: &str,
+    append: bool,
+) -> io::Result<()> {
     use std::io::BufWriter;
     let file = if append {
         std::fs::OpenOptions::new()
@@ -481,7 +499,7 @@ fn history_to_file(history: &FileHistory, path: &str, append: bool) -> io::Resul
         std::fs::File::create(path)?
     };
     let mut w = BufWriter::new(file);
-    for i in 0..history.len() {
+    for i in *append_mark..history.len() {
         writeln!(w, "{}", &history[i])?;
     }
     Ok(())
