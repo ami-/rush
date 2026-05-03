@@ -17,10 +17,11 @@ use rustyline::history::{FileHistory, History};
 
 use parse::parse_cmd;
 use parse::split_pipeline;
+use readline::ShellEditor;
 use redirect::{Redirects, split_redirect};
 
 pub const BUILTINS: &[&str] = &[
-    "echo", "exit", "type", "pwd", "cd", "complete", "jobs", "history",
+    "echo", "exit", "type", "pwd", "cd", "complete", "jobs", "history", "declare",
 ];
 
 #[derive(Debug)]
@@ -31,23 +32,34 @@ struct JobDescriptor {
     child: Child,
 }
 
+struct State {
+    completions: Rc<RefCell<HashMap<String, String>>>,
+    jobs: Vec<JobDescriptor>,
+    rl: ShellEditor,
+    history_append_mark: usize,
+    decls: HashMap<String, String>,
+}
+
 fn main() {
     let completions: Rc<RefCell<HashMap<String, String>>> = Rc::new(RefCell::new(HashMap::new()));
-    let ignore_duplicates = false;
-    let mut rl = readline::create_editor(Rc::clone(&completions), ignore_duplicates)
-        .expect("create line editor");
+    let rl = readline::create_editor(Rc::clone(&completions), false).expect("create line editor");
+
+    let mut state = State {
+        completions,
+        jobs: Vec::new(),
+        rl,
+        history_append_mark: 0,
+        decls: HashMap::new(),
+    };
 
     if let Ok(path) = env::var("HISTFILE") {
-        let _ = history_from_file(rl.history_mut(), &path)
+        let _ = history_from_file(state.rl.history_mut(), &path)
             .inspect_err(|err| eprintln!("history: file: {}, err:{}", path, err));
     }
-    //marker for history append
-    let mut history_append_mark: usize = rl.history().len();
-
-    let mut job_data: Vec<JobDescriptor> = Vec::new();
+    state.history_append_mark = state.rl.history().len();
 
     loop {
-        let line = match rl.readline("$ ") {
+        let line = match state.rl.readline("$ ") {
             Ok(l) => l,
             Err(ReadlineError::Interrupted) | Err(ReadlineError::Eof) => break,
             Err(e) => {
@@ -78,21 +90,10 @@ fn main() {
             let result: io::Result<()> = match args.as_slice() {
                 [] => continue,
                 ["exit", ..] => break,
-                [cmd, rest @ .., "&"] => do_spawn(cmd, rest, &mut *out, &mut *err, &mut job_data),
-                ["history", ..] => do_history(
-                    &tail,
-                    (&mut history_append_mark, rl.history_mut()),
-                    &mut *out,
-                    &mut *err,
-                ),
-                _ if BUILTINS.contains(&args[0]) => run_builtin(
-                    args[0],
-                    &tail,
-                    &mut *out,
-                    &mut *err,
-                    &completions,
-                    &mut job_data,
-                ),
+                [cmd, rest @ .., "&"] => do_spawn(cmd, rest, &mut *out, &mut *err, &mut state.jobs),
+                _ if BUILTINS.contains(&args[0]) => {
+                    run_builtin(args[0], &tail, &mut *out, &mut *err, &mut state)
+                }
                 _ if let Some(exe_path) = find_executable(args[0]) => {
                     do_cmd(exe_path, &tail, redir)
                 }
@@ -102,17 +103,20 @@ fn main() {
                 let _ = writeln!(err, "{}", e);
             }
         } else {
-            let _ = do_pipeline(segments, &completions, &mut job_data);
+            let _ = do_pipeline(segments, &mut state);
         }
 
-        let mut jobs_out = Box::new(io::stdout());
-        let mut jobs_err = Box::new(io::stderr());
-        let _ = do_jobs(&mut *jobs_out, &mut *jobs_err, &mut job_data, true);
+        let _ = do_jobs(&mut io::stdout(), &mut io::stderr(), &mut state.jobs, true);
     }
 
     if let Ok(path) = env::var("HISTFILE") {
-        let _ = history_to_file(&history_append_mark, rl.history_mut(), &path, true)
-            .inspect_err(|err| eprintln!("history: writing file: {}, err:{}", path, err));
+        let _ = history_to_file(
+            &state.history_append_mark,
+            state.rl.history_mut(),
+            &path,
+            true,
+        )
+        .inspect_err(|err| eprintln!("history: writing file: {}, err:{}", path, err));
     }
 }
 
@@ -255,6 +259,7 @@ fn do_complete(
     }
     Ok(())
 }
+
 fn do_jobs(
     out: &mut dyn Write,
     err: &mut dyn Write,
@@ -300,6 +305,7 @@ fn do_jobs(
 
     Ok(())
 }
+
 fn do_spawn(
     cmd: &str,
     args: &[&str],
@@ -334,27 +340,23 @@ fn run_builtin(
     args: &[&str],
     out: &mut dyn Write,
     err: &mut dyn Write,
-    completions: &RefCell<HashMap<String, String>>,
-    jobs: &mut Vec<JobDescriptor>,
+    state: &mut State,
 ) -> io::Result<()> {
     match name {
         "echo" => do_echo(args, out),
         "type" => do_type(args, out, err),
         "pwd" => do_pwd(out, err),
         "cd" => do_cd(args, err),
-        "complete" => do_complete(args, out, err, completions),
-        "jobs" => do_jobs(out, err, jobs, false),
-        "history" => Ok(()), // no history access in pipeline context
-        "exit" => Ok(()),    // in a pipeline exit only closes this segment's pipe, not the shell
+        "complete" => do_complete(args, out, err, &state.completions),
+        "jobs" => do_jobs(out, err, &mut state.jobs, false),
+        "history" => do_history(args, state, out, err),
+        "declare" => do_declare(args, state, out, err),
+        "exit" => Ok(()), // in a pipeline exit only closes this segment's pipe, not the shell
         _ => Ok(()),
     }
 }
 
-fn do_pipeline(
-    segments: Vec<Vec<String>>,
-    completions: &RefCell<HashMap<String, String>>,
-    jobs: &mut Vec<JobDescriptor>,
-) -> io::Result<()> {
+fn do_pipeline(segments: Vec<Vec<String>>, state: &mut State) -> io::Result<()> {
     let n = segments.len();
     let mut children: Vec<std::process::Child> = Vec::new();
     let mut prev_read: Option<OwnedFd> = None;
@@ -378,12 +380,12 @@ fn do_pipeline(
                 let mut err = redir
                     .open_stderr_write()
                     .unwrap_or_else(|_| Box::new(io::stderr()));
-                run_builtin(cmd_name, &args, &mut *out, &mut *err, completions, jobs)?;
+                run_builtin(cmd_name, &args, &mut *out, &mut *err, state)?;
             } else {
                 let (pipe_read, pipe_write) = std::io::pipe()?;
                 let mut out: Box<dyn Write> = Box::new(pipe_write);
                 let mut err_w: Box<dyn Write> = Box::new(io::stderr());
-                run_builtin(cmd_name, &args, &mut *out, &mut *err_w, completions, jobs)?;
+                run_builtin(cmd_name, &args, &mut *out, &mut *err_w, state)?;
                 drop(out); // close write end → next command sees EOF
                 prev_read = Some(pipe_read.into());
             }
@@ -428,12 +430,12 @@ fn do_pipeline(
 
 fn do_history(
     args: &[&str],
-    history_data: (&mut usize, &mut FileHistory),
+    state: &mut State,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> io::Result<()> {
-    let append_mark = history_data.0;
-    let history = history_data.1;
+    let append_mark = &mut state.history_append_mark;
+    let history = state.rl.history_mut();
 
     if args.is_empty() {
         return show_history(0..history.len(), history, out);
@@ -445,16 +447,13 @@ fn do_history(
                 let Some(&path) = args.get(idx + 1) else {
                     return writeln!(err, "history: -r: missing filename");
                 };
-                //history.load(Path::new(path)).map_err(io::Error::other)?;
                 history_from_file(history, path)?;
-
                 idx += 2;
             }
             "-w" => {
                 let Some(&path) = args.get(idx + 1) else {
                     return writeln!(err, "history: -w: missing filename");
                 };
-                //history.save(Path::new(path)).map_err(io::Error::other)?;
                 history_to_file(append_mark, history, path, false)?;
                 idx += 2;
             }
@@ -462,7 +461,6 @@ fn do_history(
                 let Some(&path) = args.get(idx + 1) else {
                     return writeln!(err, "history: -a: missing filename");
                 };
-                //history.append(Path::new(path)).map_err(io::Error::other)?;
                 history_to_file(append_mark, history, path, true)?;
                 //keep track of mark
                 *append_mark = history.len();
@@ -492,6 +490,7 @@ fn show_history(
     }
     Ok(())
 }
+
 fn history_from_file(history: &mut FileHistory, path: &str) -> io::Result<()> {
     let text = std::fs::read_to_string(path)?;
     for line in text.lines() {
@@ -499,6 +498,7 @@ fn history_from_file(history: &mut FileHistory, path: &str) -> io::Result<()> {
     }
     Ok(())
 }
+
 fn history_to_file(
     append_mark: &usize,
     history: &FileHistory,
@@ -519,4 +519,64 @@ fn history_to_file(
         writeln!(w, "{}", &history[i])?;
     }
     Ok(())
+}
+
+fn do_declare(
+    args: &[&str],
+    state: &mut State,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> io::Result<()> {
+    let mut idx = 0;
+    while idx < args.len() {
+        match args[idx] {
+            "-p" => {
+                let Some(&var) = args.get(idx + 1) else {
+                    return writeln!(err, "declare: -p: missing variable name");
+                };
+                match state.decls.get(var) {
+                    Some(val) => {
+                        writeln!(out, "declare -- {}=\"{}\"", var, val)?;
+                    }
+                    None => {
+                        writeln!(err, "declare: {}: not found", var)?;
+                    }
+                }
+
+                idx += 2;
+            }
+            rest => {
+                if let Some((var, val)) = parse_var_decl(rest)
+                    && is_valid_identifier(&var)
+                {
+                    state.decls.insert(var, val);
+                } else {
+                    writeln!(err, "declare: `{}': not a valid identifier", rest)?;
+                }
+                idx += 1;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn parse_var_decl(line: &str) -> Option<(String, String)> {
+    let split: Vec<&str> = line.split('=').collect();
+    if split.len() == 2 {
+        return Some((split[0].to_owned(), split[1].to_owned()));
+    }
+    None
+}
+fn is_valid_identifier(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) if c.is_alphabetic() || c == '_' => (),
+        _ => return false,
+    }
+
+    chars.all(|c| c.is_alphanumeric() || c == '_')
 }

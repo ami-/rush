@@ -13,6 +13,8 @@ use rustyline::{Config, Context, Editor, Helper};
 
 use crate::{BUILTINS, executables_with_prefix};
 
+pub type ShellEditor = Editor<ShellHelper, DefaultHistory>;
+
 pub struct ShellHelper {
     file_completer: FilenameCompleter,
     completions: Rc<RefCell<HashMap<String, String>>>,
