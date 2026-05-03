@@ -103,10 +103,11 @@ impl Helper for ShellHelper {}
 
 pub fn create_editor(
     completions: Rc<RefCell<HashMap<String, String>>>,
+    ignore_duplicates: bool,
 ) -> rustyline::Result<Editor<ShellHelper, DefaultHistory>> {
     let config = Config::builder()
         .auto_add_history(true)
-        .history_ignore_dups(true)?
+        .history_ignore_dups(ignore_duplicates)?
         .history_ignore_space(true)
         .bell_style(BellStyle::Audible)
         .completion_type(rustyline::CompletionType::List)

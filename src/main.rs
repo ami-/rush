@@ -33,7 +33,9 @@ struct JobDescriptor {
 
 fn main() {
     let completions: Rc<RefCell<HashMap<String, String>>> = Rc::new(RefCell::new(HashMap::new()));
-    let mut rl = readline::create_editor(Rc::clone(&completions)).expect("create line editor");
+    let ignore_duplicates = false;
+    let mut rl = readline::create_editor(Rc::clone(&completions), ignore_duplicates)
+        .expect("create line editor");
     //marker for history append
     let mut history_append_mark: usize = 0;
 
