@@ -381,12 +381,8 @@ fn do_pipeline(segments: Vec<Vec<String>>, state: &mut State) -> io::Result<()> 
 
         if BUILTINS.contains(&cmd_name) {
             if is_last {
-                let mut out = redir
-                    .open_stdout_write()
-                    .unwrap_or_else(|_| Box::new(io::stdout()));
-                let mut err = redir
-                    .open_stderr_write()
-                    .unwrap_or_else(|_| Box::new(io::stderr()));
+                let mut out = redir.open_stdout_write()?;
+                let mut err = redir.open_stderr_write()?;
                 run_builtin(cmd_name, &args, &mut *out, &mut *err, state)?;
             } else {
                 let (pipe_read, pipe_write) = std::io::pipe()?;
