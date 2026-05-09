@@ -21,10 +21,10 @@ impl OutDest {
         match self {
             OutDest::Inherit | OutDest::SameAs(_) => Ok(None),
             OutDest::File { append, path } => {
-                if let Some(parent) = Path::new(path).parent() {
-                    if !parent.as_os_str().is_empty() {
-                        std::fs::create_dir_all(parent)?;
-                    }
+                if let Some(parent) = Path::new(path).parent()
+                    && !parent.as_os_str().is_empty()
+                {
+                    std::fs::create_dir_all(parent)?;
                 }
                 let f: File = if *append {
                     OpenOptions::new().append(true).create(true).open(path)?

@@ -128,7 +128,7 @@ fn do_echo(args: &[&str], out: &mut dyn Write) -> io::Result<()> {
 }
 
 fn do_type(args: &[&str], out: &mut dyn Write, err: &mut dyn Write) -> io::Result<()> {
-    if args.len() == 0 {
+    if args.is_empty() {
         return writeln!(err, "type: needs argument");
     }
     let cmd = args[0];
@@ -147,7 +147,7 @@ fn do_pwd(out: &mut dyn Write, _err: &mut dyn Write) -> io::Result<()> {
 }
 
 fn do_cd(args: &[&str], err: &mut dyn Write) -> io::Result<()> {
-    if args.len() == 0 {
+    if args.is_empty() {
         return writeln!(err, "cd: needs argument");
     }
     let home = env::var("HOME").unwrap_or_default();
@@ -221,10 +221,9 @@ fn find_executable(name: &str) -> Option<path::PathBuf> {
             let full_path = dir.join(name);
             if full_path.is_file()
                 && let Ok(meta) = full_path.metadata()
+                && is_executable(&full_path, &meta)
             {
-                if is_executable(&full_path, &meta) {
-                    return Some(full_path);
-                }
+                return Some(full_path);
             }
         }
     }

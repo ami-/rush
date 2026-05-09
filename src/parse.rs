@@ -57,15 +57,14 @@ pub fn parse_cmd(line: &str) -> Vec<String> {
             }
         }
         if !in_sq && !in_dq && cc.is_ascii_whitespace() {
-            if buf.len() > 0 {
+            if !buf.is_empty() {
                 out.push(std::mem::take(&mut buf));
             }
             continue;
         }
         if !in_sq && !in_dq && cc == '|' {
-            if buf.len() > 0 {
-                out.push(buf.clone());
-                buf.clear();
+            if !buf.is_empty() {
+                out.push(std::mem::take(&mut buf));
             }
             out.push("|".to_string());
             continue;
@@ -99,7 +98,7 @@ pub fn parse_cmd(line: &str) -> Vec<String> {
         }
         buf.push(cc);
     }
-    if buf.len() > 0 {
+    if !buf.is_empty() {
         out.push(buf)
     }
     out

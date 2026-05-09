@@ -117,7 +117,7 @@ pub fn create_editor(
     let mut rl = Editor::with_config(config)?;
     rl.set_helper(Some(ShellHelper {
         file_completer: FilenameCompleter::new(),
-        completions: completions,
+        completions,
     }));
     Ok(rl)
 }
