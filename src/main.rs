@@ -619,3 +619,53 @@ fn is_valid_identifier(s: &str) -> bool {
 
     chars.all(|c| c.is_alphanumeric() || c == '_')
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run(name: &str, args: &[&str]) -> (String, String) {
+        let mut out = Vec::<u8>::new();
+        let mut err = Vec::<u8>::new();
+        let completions: Rc<RefCell<HashMap<String, String>>> =
+            Rc::new(RefCell::new(HashMap::new()));
+        let rl = readline::create_editor(Rc::clone(&completions), false)
+            .expect("rustyline: failed to create line editor");
+        let mut state = State {
+            completions,
+            jobs: Vec::new(),
+            rl,
+            history_append_mark: 0,
+            decls: HashMap::new(),
+        };
+        run_builtin(name, args, &mut out, &mut err, &mut state).unwrap();
+        (
+            String::from_utf8(out).unwrap(),
+            String::from_utf8(err).unwrap(),
+        )
+    }
+
+    #[test]
+    fn echo_joins_args() {
+        let (out, _) = run("echo", &["hello", "world"]);
+        assert_eq!(out, "hello world\n");
+    }
+
+    #[test]
+    fn type_identifies_builtin() {
+        let (out, _) = run("type", &["echo"]);
+        assert_eq!(out, "echo is a shell builtin\n");
+    }
+
+    #[test]
+    fn type_unknown() {
+        let (_, err) = run("type", &["haha"]);
+        assert_eq!(err, "haha: not found\n");
+    }
+
+    #[test]
+    fn cd_missing_arg_writes_to_err() {
+        let (_, err) = run("cd", &[]);
+        assert!(err.contains("needs argument"));
+    }
+}
