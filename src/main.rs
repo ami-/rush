@@ -473,14 +473,14 @@ fn do_history(
                 *append_mark = history.len();
                 idx += 2;
             }
-            n => {
+            n if let Ok(nr) = n.parse::<usize>() => {
                 let len = history.len();
-                let start = n
-                    .parse::<usize>()
-                    .map(|n| len.saturating_sub(n))
-                    .unwrap_or(0);
+                let start = len.saturating_sub(nr);
                 show_history(start..len, history, out)?;
                 idx += 1;
+            }
+            o => {
+                return writeln!(err, "history: unknown argument {}", o);
             }
         }
     }
