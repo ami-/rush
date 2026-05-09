@@ -151,7 +151,9 @@ fn do_cd(args: &[&str], err: &mut dyn Write) -> io::Result<()> {
     if args.len() == 0 {
         return writeln!(err, "cd: needs argument");
     }
-    let path = args[0].replace("~", env::var("HOME").unwrap().as_str());
+    let home = env::var("HOME").unwrap_or_default();
+    let path = args[0].replace("~", &home);
+
     let dir = Path::new(&path);
     if dir.exists() {
         set_current_dir(dir)
