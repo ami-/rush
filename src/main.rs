@@ -44,7 +44,8 @@ struct State {
 
 fn main() {
     let completions: Rc<RefCell<HashMap<String, String>>> = Rc::new(RefCell::new(HashMap::new()));
-    let rl = readline::create_editor(Rc::clone(&completions), false).expect("create line editor");
+    let rl = readline::create_editor(Rc::clone(&completions), false)
+        .expect("rustyline: failed to create line editor");
 
     let mut state = State {
         completions,
