@@ -7,8 +7,6 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::env::{self, set_current_dir};
 use std::io::{self, Write};
-use std::os::fd::OwnedFd;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{self, Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::rc::Rc;
@@ -163,6 +161,32 @@ fn do_cd(args: &[&str], err: &mut dyn Write) -> io::Result<()> {
     }
 }
 
+pub fn is_executable(path: &Path, meta: &std::fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        let _ = path;
+        use std::os::unix::fs::PermissionsExt;
+        meta.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(windows)]
+    {
+        let _ = meta;
+        path.extension().map_or(false, |ext| {
+            let ext = ext.to_string_lossy().to_lowercase();
+            let pathext =
+                std::env::var("PATHEXT").unwrap_or_else(|_| "exe;bat;cmd;com".to_string());
+            pathext
+                .split(';')
+                .any(|e| e.trim_start_matches('.').eq_ignore_ascii_case(&ext))
+        })
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (path, meta);
+        false
+    }
+}
+
 pub fn executables_with_prefix(prefix: &str) -> Vec<String> {
     use std::collections::HashSet;
     let Ok(path) = env::var("PATH") else {
@@ -180,8 +204,8 @@ pub fn executables_with_prefix(prefix: &str) -> Vec<String> {
             let Some(name) = entry.file_name().to_str().map(str::to_string) else {
                 continue;
             };
-            if meta.is_file() && meta.permissions().mode() & 0o111 != 0 && name.starts_with(prefix)
-            {
+            let path = entry.path();
+            if meta.is_file() && is_executable(&path, &meta) && name.starts_with(prefix) {
                 names.insert(name);
             }
         }
@@ -198,7 +222,7 @@ fn find_executable(name: &str) -> Option<path::PathBuf> {
             if full_path.is_file()
                 && let Ok(meta) = full_path.metadata()
             {
-                if meta.permissions().mode() & 0o111 != 0 {
+                if is_executable(&full_path, &meta) {
                     return Some(full_path);
                 }
             }
@@ -363,10 +387,23 @@ fn run_builtin(
     }
 }
 
+enum PrevRead {
+    Pipe(std::io::PipeReader),
+    Child(std::process::ChildStdout),
+}
+impl From<PrevRead> for Stdio {
+    fn from(s: PrevRead) -> Self {
+        match s {
+            PrevRead::Pipe(p) => Stdio::from(p),
+            PrevRead::Child(c) => Stdio::from(c),
+        }
+    }
+}
+
 fn do_pipeline(segments: Vec<Vec<String>>, state: &mut State) -> io::Result<()> {
     let n = segments.len();
     let mut children: Vec<std::process::Child> = Vec::new();
-    let mut prev_read: Option<OwnedFd> = None;
+    let mut prev_read: Option<PrevRead> = None;
 
     for (i, seg) in segments.iter().enumerate() {
         let is_last = i == n - 1;
@@ -390,7 +427,7 @@ fn do_pipeline(segments: Vec<Vec<String>>, state: &mut State) -> io::Result<()> 
                 let mut err_w: Box<dyn Write> = Box::new(io::stderr());
                 run_builtin(cmd_name, &args, &mut *out, &mut *err_w, state)?;
                 drop(out); // close write end → next command sees EOF
-                prev_read = Some(pipe_read.into());
+                prev_read = Some(PrevRead::Pipe(pipe_read));
             }
         } else {
             let stdin_stdio = match prev_read.take() {
@@ -416,12 +453,11 @@ fn do_pipeline(segments: Vec<Vec<String>>, state: &mut State) -> io::Result<()> 
                 .spawn()?;
 
             if !is_last {
-                let fd: OwnedFd = child
+                let stdout = child
                     .stdout
                     .take()
-                    .ok_or(io::Error::other("pipe not set up"))?
-                    .into();
-                prev_read = Some(fd);
+                    .ok_or(io::Error::other("pipe not set up"))?;
+                prev_read = Some(PrevRead::Child(stdout));
             }
             children.push(child);
         }
