@@ -58,8 +58,7 @@ pub fn parse_cmd(line: &str) -> Vec<String> {
         }
         if !in_sq && !in_dq && cc.is_ascii_whitespace() {
             if buf.len() > 0 {
-                out.push(buf.clone());
-                buf.clear();
+                out.push(std::mem::take(&mut buf));
             }
             continue;
         }
