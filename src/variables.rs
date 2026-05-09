@@ -1,22 +1,25 @@
 use regex::{Captures, Regex};
 use std::collections::HashMap;
+use std::sync::LazyLock;
+
+// Group 1: $NAME style | Group 2: ${NAME} style
+static VAR_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\$(\w+)|\$\{(\w+)\}").unwrap());
 
 pub fn expand_vars(decls: &HashMap<String, String>, tokens: &mut Vec<String>) {
-    // Group 1: $NAME style | Group 2: ${NAME} style
-    let re = Regex::new(r"\$(\w+)|\$\{(\w+)\}").unwrap();
     *tokens = tokens
         .iter()
         .map(|arg| {
-            re.replace_all(arg, |cap: &Captures| {
-                let var = cap
-                    .get(1)
-                    .or_else(|| cap.get(2))
-                    .map(|m| m.as_str())
-                    .unwrap_or("");
+            VAR_RE
+                .replace_all(arg, |cap: &Captures| {
+                    let var = cap
+                        .get(1)
+                        .or_else(|| cap.get(2))
+                        .map(|m| m.as_str())
+                        .unwrap_or("");
 
-                decls.get(var).map(|s| s.as_str()).unwrap_or("").to_string()
-            })
-            .into_owned()
+                    decls.get(var).map(|s| s.as_str()).unwrap_or("").to_string()
+                })
+                .into_owned()
         })
         .filter(|s| !s.is_empty())
         .collect();
