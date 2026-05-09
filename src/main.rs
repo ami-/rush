@@ -419,7 +419,11 @@ fn do_pipeline(segments: Vec<Vec<String>>, state: &mut State) -> io::Result<()> 
                 .spawn()?;
 
             if !is_last {
-                let fd: OwnedFd = child.stdout.take().unwrap().into();
+                let fd: OwnedFd = child
+                    .stdout
+                    .take()
+                    .ok_or(io::Error::other("pipe not set up"))?
+                    .into();
                 prev_read = Some(fd);
             }
             children.push(child);
