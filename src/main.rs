@@ -568,11 +568,8 @@ fn do_declare(
 }
 
 fn parse_var_decl(line: &str) -> Option<(String, String)> {
-    let split: Vec<&str> = line.split('=').collect();
-    if split.len() == 2 {
-        return Some((split[0].to_owned(), split[1].to_owned()));
-    }
-    None
+    let (name, val) = line.split_once('=')?;
+    Some((name.to_owned(), val.to_owned()))
 }
 fn is_valid_identifier(s: &str) -> bool {
     if s.is_empty() {
