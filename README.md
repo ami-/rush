@@ -1,5 +1,4 @@
-[![progress-banner](https://backend.codecrafters.io/progress/shell/5e839e5e-7feb-4bf9-9206-5af0d8559659)](https://app.codecrafters.io/users/codecrafters-bot?r=2qF)
-
+# rush
 This is a study project for Rust solutions to the ["Build Your Own Shell" Challenge](https://app.codecrafters.io/courses/shell/overview).
 
 Project creates a POSIX compliant shell that's capable of
